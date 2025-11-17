@@ -81,6 +81,7 @@ export interface Project {
   modelUrl?: string;
   scans?: ScanData[];
   agentStates?: Record<AgentType, AgentState>;
+  isGlbActive?: boolean;
 }
 
 // Fix: Add InsightType enum

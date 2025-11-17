@@ -313,7 +313,7 @@ interface ProjectViewerPageProps {
   project: Project;
   onBack: () => void;
   onUpdateProjectName: (newName: string) => void;
-  onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => void;
+  onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>, isGlbActive?: boolean) => void;
 }
 
 const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
@@ -361,7 +361,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isAgentsLauncherOpen, setIsAgentsLauncherOpen] = useState(false);
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
-    const [isGlbActive, setIsGlbActive] = useState(false);
+    const [isGlbActive, setIsGlbActive] = useState(project.isGlbActive ?? false);
     
     // Per-scan viewer state map - keyed by scan date
     const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
@@ -531,7 +531,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Set current date to the latest scan date present in the project data
         const latestScanDate = initialScans.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.date || project.lastScan.date;
         setCurrentScanDate(latestScanDate);
-    }, [project.id]);
+
+        // Initialize GLB state from project data
+        setIsGlbActive(project.isGlbActive ?? false);
+    }, [project.id, project.isGlbActive]);
     
     const handleDateChange = (newDate: string) => {
         setCurrentScanDate(newDate);
@@ -546,6 +549,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Close active insight chat
         setActiveInsightChatId(null);
     }, [currentScanDate]);
+
+    // Auto-disable GLB mode when current scan has no modelUrl
+    useEffect(() => {
+        if (isGlbActive && (!currentScan || !currentScan.modelUrl)) {
+            setIsGlbActive(false);
+        }
+    }, [isGlbActive, currentScan]);
 
     const handleAddScan = () => {
         // Exit delete mode when adding a scan
@@ -562,7 +572,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     };
 
     const handleToggleGlb = () => {
-        setIsGlbActive(prev => !prev);
+        setIsGlbActive(prev => {
+            const newValue = !prev;
+            // Persist GLB state immediately when toggled
+            onSaveProject(scans, agentStates, newValue);
+            return newValue;
+        });
     };
 
     const handleToggleScanSelection = (date: string) => {
@@ -619,7 +634,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setSelectedScanDates([]);
         
         // Persist the deletion
-        onSaveProject(updatedScans, agentStates);
+        onSaveProject(updatedScans, agentStates, isGlbActive);
     };
     
     const handleConfirmAddScan = (newDate: string) => {
@@ -653,7 +668,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setIsAddScanModalOpen(false);
 
         // Immediate persist for new scan
-        onSaveProject(updatedScans, agentStates);
+        onSaveProject(updatedScans, agentStates, isGlbActive);
     };
 
     const projectSummary = useMemo<ProjectSummary>(() => {
@@ -1234,6 +1249,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     // Render center viewer content based on file type
     const renderCenterViewerContent = () => {
+        // Prioritize GLB mode - if active and current scan has modelUrl, show GLB viewer
+        if (isGlbActive && currentScan?.modelUrl) {
+            return (
+                <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
+                    <Viewer modelUrl={currentScan.modelUrl} />
+                </div>
+            );
+        }
+
         if (!selectedCenterFile) {
             return (
                 <div className="flex-1 flex items-center justify-center bg-gray-900">
@@ -1509,10 +1533,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     useEffect(() => {
         if (!initializedRef.current) return;
         const timer = window.setTimeout(() => {
-            onSaveProject(scans, agentStates);
+            onSaveProject(scans, agentStates, isGlbActive);
         }, 500);
         return () => window.clearTimeout(timer);
-    }, [scans, agentStates, onSaveProject]);
+    }, [scans, agentStates, isGlbActive, onSaveProject]);
 
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
@@ -1620,7 +1644,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     />
                     
                     {/* File tabs */}
-                    {(currentScanViewerState.centerViewerFiles.length > 0) && (
+                    {!isGlbActive && (currentScanViewerState.centerViewerFiles.length > 0) && (
                         <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto flex-shrink-0 relative">
                             {currentScanViewerState.centerViewerFiles.map((file, index) => (
                                 <div key={index} className="relative group">
