@@ -497,6 +497,11 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({ summary, insights, prog
             </button>
           </div>
         </div>
+
+        {/* Test Card */}
+        <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+          <h3 className="text-lg font-semibold text-gray-200">Test</h3>
+        </div>
       </div>
     </div>
   );
