@@ -370,6 +370,9 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const centerViewerUrlsRef = useRef<Record<string, string[]>>({});
     const centerViewerFileInputRef = useRef<HTMLInputElement>(null);
     
+    // Ref for tracking GLB URLs per scan (for cleanup)
+    const glbUrlsRef = useRef<Record<string, string>>({});
+    
     // PDF tools panel state
     const [isPdfToolsOpen, setIsPdfToolsOpen] = useState<boolean>(false);
     const [pdfToolbarHandlers, setPdfToolbarHandlers] = useState<PdfToolbarHandlers | null>(null);
@@ -590,6 +593,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 urls.forEach(url => URL.revokeObjectURL(url));
                 delete centerViewerUrlsRef.current[date];
             }
+            // Clean up GLB URL for this scan
+            const glbUrl = glbUrlsRef.current[date];
+            if (glbUrl) {
+                URL.revokeObjectURL(glbUrl);
+                delete glbUrlsRef.current[date];
+            }
         });
         
         // Remove selected scans
@@ -774,6 +783,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     }, [currentScanDate]);
 
     const handleModelUpload = (url: string) => {
+        if (!currentScanDate) return;
+        
+        // Revoke old GLB URL for this scan if it exists
+        const oldUrl = glbUrlsRef.current[currentScanDate];
+        if (oldUrl && oldUrl !== url) {
+            URL.revokeObjectURL(oldUrl);
+        }
+        
+        // Store new GLB URL
+        glbUrlsRef.current[currentScanDate] = url;
+        
         setScans(prev => prev.map(scan => 
             scan.date === currentScanDate ? { ...scan, modelUrl: url } : scan
         ));
@@ -1180,6 +1200,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             Object.values(centerViewerUrlsRef.current).forEach(urls => {
                 urls.forEach(url => URL.revokeObjectURL(url));
             });
+            // Cleanup GLB URLs
+            Object.values(glbUrlsRef.current).forEach(url => {
+                URL.revokeObjectURL(url);
+            });
         };
     }, []);
 
@@ -1234,6 +1258,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     // Render center viewer content based on file type
     const renderCenterViewerContent = () => {
+        // If GLB mode is active, show the GLB viewer for the current scan
+        if (isGlbActive) {
+            return (
+                <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
+                    <Viewer modelUrl={currentScan?.modelUrl} onModelUpload={handleModelUpload} />
+                </div>
+            );
+        }
+        
         if (!selectedCenterFile) {
             return (
                 <div className="flex-1 flex items-center justify-center bg-gray-900">
@@ -1619,8 +1652,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         accept=".pdf,.csv,.glb,.png,.jpg,.jpeg,.gif,.webp"
                     />
                     
-                    {/* File tabs */}
-                    {(currentScanViewerState.centerViewerFiles.length > 0) && (
+                    {/* File tabs - hidden when GLB mode is active */}
+                    {!isGlbActive && (currentScanViewerState.centerViewerFiles.length > 0) && (
                         <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto flex-shrink-0 relative">
                             {currentScanViewerState.centerViewerFiles.map((file, index) => (
                                 <div key={index} className="relative group">
