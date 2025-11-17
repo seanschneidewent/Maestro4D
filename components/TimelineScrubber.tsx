@@ -152,9 +152,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
                 ? 'bg-red-600 hover:bg-red-700'
                 : 'bg-gray-700 hover:bg-gray-600'
             }`}
+            aria-label="Delete scan"
           >
             <TrashIcon className="h-4 w-4" />
-            Delete Scan
           </button>
         )}
         <div className={`relative w-full h-10 ${isDeleteMode ? 'opacity-75' : ''}`}>
@@ -192,9 +192,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
         <button
           onClick={onAddScan}
           className="flex-shrink-0 flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition-colors"
+          aria-label="Add scan"
         >
           <PlusIcon className="h-4 w-4" />
-          Add Scan
         </button>
       </div>
     );
@@ -220,9 +220,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
               ? 'bg-red-600 hover:bg-red-700'
               : 'bg-gray-700 hover:bg-gray-600'
           }`}
+          aria-label="Delete scan"
         >
           <TrashIcon className="h-4 w-4" />
-          Delete Scan
         </button>
       )}
       <div 
@@ -296,9 +296,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
        <button
           onClick={onAddScan}
           className="flex-shrink-0 flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition-colors"
+          aria-label="Add scan"
         >
           <PlusIcon className="h-4 w-4" />
-          Add Scan
         </button>
     </div>
   );
