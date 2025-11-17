@@ -338,6 +338,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isAgentsLauncherOpen, setIsAgentsLauncherOpen] = useState(false);
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
+    const [isGlbActive, setIsGlbActive] = useState(false);
     
     // Center viewer file management state
     const [centerViewerFiles, setCenterViewerFiles] = useState<Array<{ name: string; url: string; file: File }>>([]);
@@ -512,6 +513,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleToggleDeleteMode = () => {
         setIsDeleteMode(prev => !prev);
         setSelectedScanDates([]);
+    };
+
+    const handleToggleGlb = () => {
+        setIsGlbActive(prev => !prev);
     };
 
     const handleToggleScanSelection = (date: string) => {
@@ -1416,6 +1421,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     onToggleDeleteMode={handleToggleDeleteMode}
                     onToggleScanSelection={handleToggleScanSelection}
                     onConfirmDelete={handleConfirmDelete}
+                    isGlbActive={isGlbActive}
+                    onToggleGlb={handleToggleGlb}
                 />
                 
                 <div className="flex-shrink-0 flex items-center gap-6">

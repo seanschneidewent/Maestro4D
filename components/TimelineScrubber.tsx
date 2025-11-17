@@ -11,6 +11,8 @@ interface TimelineScrubberProps {
   onToggleDeleteMode?: () => void;
   onToggleScanSelection?: (date: string) => void;
   onConfirmDelete?: () => void;
+  isGlbActive?: boolean;
+  onToggleGlb?: () => void;
 }
 
 const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ 
@@ -22,7 +24,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
   selectedScanDates = [],
   onToggleDeleteMode,
   onToggleScanSelection,
-  onConfirmDelete
+  onConfirmDelete,
+  isGlbActive = false,
+  onToggleGlb
 }) => {
   const timelineRef = useRef<HTMLDivElement>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -138,6 +142,19 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
     const isSelected = isDeleteMode && selectedScanDates.includes(scanDates[0]);
     return (
       <div className="flex-1 max-w-lg flex items-center justify-center gap-4">
+        {onToggleGlb && (
+          <button
+            onClick={onToggleGlb}
+            className={`flex-shrink-0 flex items-center gap-2 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition-colors ${
+              isGlbActive
+                ? 'bg-cyan-600 hover:bg-cyan-700'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+            aria-label="Toggle GLB"
+          >
+            GLB
+          </button>
+        )}
         {onToggleDeleteMode && (
           <button
             onClick={() => {
@@ -206,6 +223,19 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
 
   return (
     <div className="flex-1 max-w-lg flex items-center justify-center gap-4">
+      {onToggleGlb && (
+        <button
+          onClick={onToggleGlb}
+          className={`flex-shrink-0 flex items-center gap-2 text-white text-xs font-semibold py-1.5 px-3 rounded-lg transition-colors ${
+            isGlbActive
+              ? 'bg-cyan-600 hover:bg-cyan-700'
+              : 'bg-gray-700 hover:bg-gray-600'
+          }`}
+          aria-label="Toggle GLB"
+        >
+          GLB
+        </button>
+      )}
       {onToggleDeleteMode && (
         <button
           onClick={() => {
