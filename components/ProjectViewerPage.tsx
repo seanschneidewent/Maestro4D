@@ -362,6 +362,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
     const [isGlbActive, setIsGlbActive] = useState(false);
+    const [isListDataActive, setIsListDataActive] = useState(false);
     
     // Per-scan viewer state map - keyed by scan date
     const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
@@ -566,6 +567,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleToggleGlb = () => {
         setIsGlbActive(prev => !prev);
+    };
+
+    const handleToggleListData = () => {
+        setIsListDataActive(prev => !prev);
     };
 
     const handleToggleScanSelection = (date: string) => {
@@ -1652,8 +1657,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         accept=".pdf,.csv,.glb,.png,.jpg,.jpeg,.gif,.webp"
                     />
                     
-                    {/* File tabs - hidden when GLB mode is active */}
-                    {!isGlbActive && (currentScanViewerState.centerViewerFiles.length > 0) && (
+                    {/* File tabs - hidden when GLB mode is active or List Data mode is active */}
+                    {!isGlbActive && !isListDataActive && (currentScanViewerState.centerViewerFiles.length > 0) && (
                         <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto flex-shrink-0 relative">
                             {currentScanViewerState.centerViewerFiles.map((file, index) => (
                                 <div key={index} className="relative group">
@@ -1782,7 +1787,20 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     />
                                 ) : null;
                             })() : (
-                                <ReferencePanel summary={projectSummary} insights={currentScan?.insights || []} progress={project.progress} onViewReport={handleViewReport} />
+                                <ReferencePanel 
+                                    summary={projectSummary} 
+                                    insights={currentScan?.insights || []} 
+                                    progress={project.progress} 
+                                    onViewReport={handleViewReport}
+                                    isListDataActive={isListDataActive}
+                                    onToggleListData={handleToggleListData}
+                                    centerViewerFiles={currentScanViewerState.centerViewerFiles}
+                                    selectedFileIndex={currentScanViewerState.selectedFileIndex}
+                                    onSelectFile={(index) => updateCurrentScanViewerState(state => ({ ...state, selectedFileIndex: index }))}
+                                    onDeleteFile={handleCenterViewerDeleteFile}
+                                    onAddFile={handleCenterViewerAddFile}
+                                    fileInputRef={centerViewerFileInputRef}
+                                />
                             )}
                         </div>
                     )}

@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { ProjectSummary, Severity, Insight, InsightStatus, InsightType } from '../types';
-import { DocumentIcon, ArrowDownTrayIcon } from './Icons';
+import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon } from './Icons';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -12,9 +12,30 @@ interface ReferencePanelProps {
   insights: Insight[];
   progress: number;
   onViewReport?: (type: ReportType, files: File | File[], onDeleteFile?: (index: number) => void, onAddFile?: (files: File[]) => void) => void;
+  isListDataActive?: boolean;
+  onToggleListData?: () => void;
+  centerViewerFiles?: Array<{ name: string; url: string; file: File }>;
+  selectedFileIndex?: number;
+  onSelectFile?: (index: number) => void;
+  onDeleteFile?: (index: number) => void;
+  onAddFile?: (files: File[]) => void;
+  fileInputRef?: React.RefObject<HTMLInputElement>;
 }
 
-const ReferencePanel: React.FC<ReferencePanelProps> = ({ summary, insights, progress, onViewReport }) => {
+const ReferencePanel: React.FC<ReferencePanelProps> = ({ 
+  summary, 
+  insights, 
+  progress, 
+  onViewReport,
+  isListDataActive = false,
+  onToggleListData,
+  centerViewerFiles = [],
+  selectedFileIndex = 0,
+  onSelectFile,
+  onDeleteFile,
+  onAddFile,
+  fileInputRef
+}) => {
   // State for uploaded PDF files
   const [reportFiles, setReportFiles] = useState<{
     progress: File | null;
@@ -301,11 +322,87 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({ summary, insights, prog
         >
           BIM Milestones
         </button>
+        <button
+          type="button"
+          onClick={onToggleListData}
+          className={`px-3 py-2 text-sm font-semibold rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-500 ${
+            isListDataActive
+              ? 'bg-cyan-600 text-white hover:bg-cyan-700'
+              : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+          }`}
+          aria-label="List Data"
+          aria-pressed={isListDataActive}
+        >
+          List Data
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-        {/* Total Tasks Card */}
-        <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+        {isListDataActive ? (
+          <div className="space-y-2">
+            {centerViewerFiles.length === 0 ? (
+              <div className="bg-gray-800/50 p-8 rounded-lg border border-gray-700 text-center">
+                <DocumentIcon className="mx-auto h-12 w-12 text-gray-600 mb-4" />
+                <p className="text-gray-400 mb-2">No files uploaded</p>
+                <p className="text-sm text-gray-500">Click "Add Files" to upload files to the viewer</p>
+              </div>
+            ) : (
+              centerViewerFiles.map((file, index) => (
+                <button
+                  key={index}
+                  onClick={() => onSelectFile?.(index)}
+                  className={`w-full px-4 py-3 text-left rounded-md transition-colors flex items-center justify-between group ${
+                    selectedFileIndex === index
+                      ? 'bg-cyan-600 text-white'
+                      : 'bg-gray-800/50 text-gray-200 hover:bg-gray-700 border border-gray-700'
+                  }`}
+                  aria-label={`Select ${file.name}`}
+                  aria-pressed={selectedFileIndex === index}
+                >
+                  <span className="flex-1 truncate pr-2 text-sm font-semibold">{file.name}</span>
+                  {onDeleteFile && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteFile(index);
+                      }}
+                      className={`ml-2 p-1 rounded transition-colors focus:outline-none focus:ring-1 ${
+                        selectedFileIndex === index
+                          ? 'hover:bg-cyan-700 text-white'
+                          : 'hover:bg-red-500/20 hover:text-red-400 text-gray-400'
+                      }`}
+                      aria-label={`Delete ${file.name}`}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          onDeleteFile(index);
+                        }
+                      }}
+                    >
+                      <CloseIcon className="h-4 w-4" />
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+            {onAddFile && fileInputRef && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full px-4 py-3 bg-gray-700 text-gray-200 hover:bg-gray-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 flex items-center justify-center gap-2 text-sm font-semibold"
+                aria-label="Add Files"
+              >
+                <PlusIcon className="h-4 w-4" />
+                <span>Add Files</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Total Tasks Card */}
+            <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
           <h3 className="text-lg font-semibold text-gray-200 mb-3">Total Tasks</h3>
           <div className="flex items-center gap-4">
             {/* Donut Chart */}
@@ -497,6 +594,8 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({ summary, insights, prog
             </button>
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );
