@@ -548,7 +548,7 @@ const App: React.FC = () => {
     setProjects(prev => [...prev, newProject]);
   }
 
-  const handleSaveProject = (projectId: string, updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>, isGlbActive?: boolean) => {
+  const handleSaveProject = (projectId: string, updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => {
     setProjects(prevProjects =>
       prevProjects.map(p => {
         if (p.id === projectId) {
@@ -556,7 +556,7 @@ const App: React.FC = () => {
           const latestScan = [...updatedScans].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
           
           if (!latestScan) {
-             return { ...p, scans: updatedScans, agentStates, isGlbActive };
+             return { ...p, scans: updatedScans, agentStates };
           }
           
           const insights = latestScan.insights;
@@ -571,7 +571,6 @@ const App: React.FC = () => {
             ...p,
             scans: updatedScans,
             agentStates,
-            isGlbActive,
             lastScan: { ...p.lastScan, date: latestScan.date },
             progress,
             issues: {
@@ -620,7 +619,7 @@ const App: React.FC = () => {
             project={selectedProject} 
             onBack={handleBackToDashboard} 
             onUpdateProjectName={(newName) => handleUpdateProjectName(selectedProject.id, newName)}
-            onSaveProject={(updatedScans, agentStates, isGlbActive) => handleSaveProject(selectedProject.id, updatedScans, agentStates, isGlbActive)}
+            onSaveProject={(updatedScans, agentStates) => handleSaveProject(selectedProject.id, updatedScans, agentStates)}
         />
       )}
     </div>
