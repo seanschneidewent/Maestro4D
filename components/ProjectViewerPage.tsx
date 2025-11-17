@@ -172,7 +172,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                                     </tr>
                                 </thead>
                                 <tbody className="text-gray-300">
-                                    {csvData.map((row, rowIdx) => (
+                                    {currentScanViewerState.csvData.map((row, rowIdx) => (
                                         <tr key={rowIdx} className="border-b border-gray-700 hover:bg-gray-700/50">
                                             {headers.map((header, colIdx) => (
                                                 <td key={colIdx} className="px-4 py-2">
@@ -327,6 +327,29 @@ const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
     }
 };
 
+// Per-scan viewer state type
+interface ScanViewerState {
+    centerViewerFiles: Array<{ name: string; url: string; file: File }>;
+    selectedFileIndex: number;
+    pdfAnnotations: Record<string, Record<number, PdfAnnotation[]>>;
+    pdfAnnotationGroups: Record<string, AnnotationGroup[]>;
+    csvData: Record<string, string>[] | null;
+    csvLoading: boolean;
+    csvError: string | null;
+    briefFileIndex: number | null;
+}
+
+const EMPTY_SCAN_VIEWER_STATE: ScanViewerState = {
+    centerViewerFiles: [],
+    selectedFileIndex: 0,
+    pdfAnnotations: {},
+    pdfAnnotationGroups: {},
+    csvData: null,
+    csvLoading: false,
+    csvError: null,
+    briefFileIndex: null,
+};
+
 const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, onUpdateProjectName, onSaveProject }) => {
     const [scans, setScans] = useState<ScanData[]>([]);
     const [currentScanDate, setCurrentScanDate] = useState('');
@@ -340,23 +363,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
     const [isGlbActive, setIsGlbActive] = useState(false);
     
-    // Center viewer file management state
-    const [centerViewerFiles, setCenterViewerFiles] = useState<Array<{ name: string; url: string; file: File }>>([]);
-    const [selectedFileIndex, setSelectedFileIndex] = useState(0);
-    const centerViewerUrlsRef = useRef<string[]>([]);
+    // Per-scan viewer state map - keyed by scan date
+    const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
+    
+    // Refs for center viewer
+    const centerViewerUrlsRef = useRef<Record<string, string[]>>({});
     const centerViewerFileInputRef = useRef<HTMLInputElement>(null);
-    const [csvData, setCsvData] = useState<Record<string, string>[] | null>(null);
-    const [csvLoading, setCsvLoading] = useState(false);
-    const [csvError, setCsvError] = useState<string | null>(null);
-    
-    // PDF annotations state - keyed by file identifier (name + size)
-    const [pdfAnnotations, setPdfAnnotations] = useState<Record<string, Record<number, PdfAnnotation[]>>>({});
-    
-    // PDF annotation groups state - keyed by file identifier
-    const [pdfAnnotationGroups, setPdfAnnotationGroups] = useState<Record<string, AnnotationGroup[]>>({});
-    
-    // Reference to the auto-generated brief file index
-    const briefFileIndexRef = useRef<number | null>(null);
     
     // PDF tools panel state
     const [isPdfToolsOpen, setIsPdfToolsOpen] = useState<boolean>(false);
@@ -410,6 +422,23 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const getFileIdentifier = (file: File): string => {
         return `${file.name}_${file.size}`;
     };
+    
+    // Helper functions to get/update current scan's viewer state
+    const getCurrentScanViewerState = useCallback((): ScanViewerState => {
+        if (!currentScanDate) return EMPTY_SCAN_VIEWER_STATE;
+        return scanViewerState[currentScanDate] || EMPTY_SCAN_VIEWER_STATE;
+    }, [currentScanDate, scanViewerState]);
+    
+    const updateCurrentScanViewerState = useCallback((updater: (state: ScanViewerState) => ScanViewerState) => {
+        if (!currentScanDate) return;
+        setScanViewerState(prev => ({
+            ...prev,
+            [currentScanDate]: updater(prev[currentScanDate] || EMPTY_SCAN_VIEWER_STATE)
+        }));
+    }, [currentScanDate]);
+    
+    // Memoized current scan viewer state
+    const currentScanViewerState = useMemo(() => getCurrentScanViewerState(), [getCurrentScanViewerState]);
     
     useEffect(() => {
         localStorage.setItem('maestro4d_insightsPanelCollapsed', String(isInsightsPanelCollapsed));
@@ -492,6 +521,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Initialize agent states
         setAgentStates(project.agentStates || DEFAULT_AGENT_STATES);
 
+        // Initialize empty viewer state for all scans
+        const initialViewerState: Record<string, ScanViewerState> = {};
+        initialScans.forEach(scan => {
+            initialViewerState[scan.date] = EMPTY_SCAN_VIEWER_STATE;
+        });
+        setScanViewerState(initialViewerState);
+
         // Set current date to the latest scan date present in the project data
         const latestScanDate = initialScans.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.date || project.lastScan.date;
         setCurrentScanDate(latestScanDate);
@@ -500,6 +536,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleDateChange = (newDate: string) => {
         setCurrentScanDate(newDate);
     };
+    
+    // Reset UI elements when scan changes
+    useEffect(() => {
+        // Close PDF tools panel
+        setIsPdfToolsOpen(false);
+        setPdfToolbarHandlers(null);
+        
+        // Close active insight chat
+        setActiveInsightChatId(null);
+    }, [currentScanDate]);
 
     const handleAddScan = () => {
         // Exit delete mode when adding a scan
@@ -532,8 +578,29 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleConfirmDelete = () => {
         if (selectedScanDates.length === 0) return;
         
+        // Clean up URLs for deleted scans
+        selectedScanDates.forEach(date => {
+            const state = scanViewerState[date];
+            if (state) {
+                // Revoke all object URLs for this scan
+                state.centerViewerFiles.forEach(file => {
+                    if (file.url) URL.revokeObjectURL(file.url);
+                });
+                const urls = centerViewerUrlsRef.current[date] || [];
+                urls.forEach(url => URL.revokeObjectURL(url));
+                delete centerViewerUrlsRef.current[date];
+            }
+        });
+        
         // Remove selected scans
         const updatedScans = scans.filter(scan => !selectedScanDates.includes(scan.date));
+        
+        // Remove viewer state for deleted scans
+        setScanViewerState(prev => {
+            const updated = { ...prev };
+            selectedScanDates.forEach(date => delete updated[date]);
+            return updated;
+        });
         
         // If current scan is being deleted, switch to the latest remaining scan
         if (selectedScanDates.includes(currentScanDate)) {
@@ -574,6 +641,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Add new scan and sort the array by date to maintain chronological order
         const updatedScans = [...scans, newScan];
         updatedScans.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        // Initialize empty viewer state for the new scan
+        setScanViewerState(prev => ({
+            ...prev,
+            [newDate]: EMPTY_SCAN_VIEWER_STATE
+        }));
         
         setScans(updatedScans);
         setCurrentScanDate(newDate);
@@ -719,74 +792,93 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     };
 
     // Center viewer file management handlers
-    const handleCenterViewerAddFile = (files: File[]) => {
-        if (!files || files.length === 0) return;
+    const handleCenterViewerAddFile = useCallback((files: File[]) => {
+        if (!files || files.length === 0 || !currentScanDate) return;
         
         try {
+            // Initialize URLs array for this scan if it doesn't exist
+            if (!centerViewerUrlsRef.current[currentScanDate]) {
+                centerViewerUrlsRef.current[currentScanDate] = [];
+            }
+            
             const newFileData = files.map(file => {
                 if (!file || !(file instanceof File)) {
                     throw new Error('Invalid file object');
                 }
                 const url = URL.createObjectURL(file);
-                centerViewerUrlsRef.current.push(url);
+                centerViewerUrlsRef.current[currentScanDate].push(url);
                 return { name: file.name, url, file };
             });
             
-            setCenterViewerFiles(prev => {
-                const wasEmpty = prev.length === 0;
-                const updated = [...prev, ...newFileData];
+            updateCurrentScanViewerState(state => {
+                const wasEmpty = state.centerViewerFiles.length === 0;
+                const updated = [...state.centerViewerFiles, ...newFileData];
                 // If this was the first file addition, select the first file
-                if (wasEmpty && updated.length > 0) {
-                    setSelectedFileIndex(0);
-                }
-                return updated;
+                return {
+                    ...state,
+                    centerViewerFiles: updated,
+                    selectedFileIndex: wasEmpty && updated.length > 0 ? 0 : state.selectedFileIndex
+                };
             });
         } catch (error) {
             console.error('Error adding files:', error);
             // Don't crash the app, just log the error
         }
-    };
+    }, [currentScanDate, updateCurrentScanViewerState]);
 
-    const handleCenterViewerDeleteFile = (index: number) => {
-        setCenterViewerFiles(prev => {
+    const handleCenterViewerDeleteFile = useCallback((index: number) => {
+        if (!currentScanDate) return;
+        
+        updateCurrentScanViewerState(state => {
+            const fileToDelete = state.centerViewerFiles[index];
+            
             // Clean up annotations for the deleted file
-            if (prev[index]?.file) {
-                const fileId = getFileIdentifier(prev[index].file);
-                setPdfAnnotations(prevAnnots => {
-                    const newAnnots = { ...prevAnnots };
-                    delete newAnnots[fileId];
-                    return newAnnots;
-                });
+            let newPdfAnnotations = state.pdfAnnotations;
+            let newPdfAnnotationGroups = state.pdfAnnotationGroups;
+            if (fileToDelete?.file) {
+                const fileId = getFileIdentifier(fileToDelete.file);
+                newPdfAnnotations = { ...state.pdfAnnotations };
+                delete newPdfAnnotations[fileId];
+                
+                newPdfAnnotationGroups = { ...state.pdfAnnotationGroups };
+                delete newPdfAnnotationGroups[fileId];
             }
             
             // Revoke URL for the file being deleted
-            if (prev[index]?.url) {
-                URL.revokeObjectURL(prev[index].url);
-                centerViewerUrlsRef.current = centerViewerUrlsRef.current.filter(url => url !== prev[index].url);
+            if (fileToDelete?.url) {
+                URL.revokeObjectURL(fileToDelete.url);
+                if (centerViewerUrlsRef.current[currentScanDate]) {
+                    centerViewerUrlsRef.current[currentScanDate] = centerViewerUrlsRef.current[currentScanDate].filter(url => url !== fileToDelete.url);
+                }
             }
             
-            const newFiles = prev.filter((_, i) => i !== index);
+            const newFiles = state.centerViewerFiles.filter((_, i) => i !== index);
             
             // Adjust selected index if needed
+            let newSelectedIndex = state.selectedFileIndex;
             if (newFiles.length === 0) {
-                setSelectedFileIndex(0);
+                newSelectedIndex = 0;
             } else {
-                let newSelectedIndex = selectedFileIndex;
-                if (index === selectedFileIndex) {
+                if (index === state.selectedFileIndex) {
                     // If deleting the currently selected file, select the first available file
-                    newSelectedIndex = Math.min(selectedFileIndex, newFiles.length - 1);
-                } else if (index < selectedFileIndex) {
+                    newSelectedIndex = Math.min(state.selectedFileIndex, newFiles.length - 1);
+                } else if (index < state.selectedFileIndex) {
                     // If deleting a file before the selected one, adjust index
-                    newSelectedIndex = selectedFileIndex - 1;
+                    newSelectedIndex = state.selectedFileIndex - 1;
                 }
                 // Ensure index is within bounds
                 newSelectedIndex = Math.max(0, Math.min(newSelectedIndex, newFiles.length - 1));
-                setSelectedFileIndex(newSelectedIndex);
             }
             
-            return newFiles;
+            return {
+                ...state,
+                centerViewerFiles: newFiles,
+                selectedFileIndex: newSelectedIndex,
+                pdfAnnotations: newPdfAnnotations,
+                pdfAnnotationGroups: newPdfAnnotationGroups
+            };
         });
-    };
+    }, [currentScanDate, updateCurrentScanViewerState]);
 
     const handleCenterViewerFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -800,49 +892,72 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     
     // Handler for PDF upload in center viewer (when user changes PDF via PdfViewer)
     const handleCenterViewerPdfUpload = useCallback((url: string) => {
-        setCenterViewerFiles(prev => {
-            const validIndex = prev.length > 0 ? Math.min(selectedFileIndex, prev.length - 1) : -1;
-            if (validIndex < 0) return prev;
+        if (!currentScanDate) return;
+        
+        updateCurrentScanViewerState(state => {
+            const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
+            if (validIndex < 0) return state;
             
-            return prev.map((file, index) => 
-                index === validIndex ? { ...file, url } : file
-            );
+            return {
+                ...state,
+                centerViewerFiles: state.centerViewerFiles.map((file, index) => 
+                    index === validIndex ? { ...file, url } : file
+                )
+            };
         });
-    }, [selectedFileIndex]);
+    }, [currentScanDate, updateCurrentScanViewerState]);
     
     // Handler for PDF annotation changes in center viewer
     const handleCenterViewerPdfAnnotationsChange = useCallback((annotations: Record<number, PdfAnnotation[]>) => {
-        // Compute file identifier from current state
-        const validIndex = centerViewerFiles.length > 0 ? Math.min(selectedFileIndex, centerViewerFiles.length - 1) : -1;
-        if (validIndex >= 0 && centerViewerFiles[validIndex]) {
-            const fileId = getFileIdentifier(centerViewerFiles[validIndex].file);
-            setPdfAnnotations(prev => ({
-                ...prev,
-                [fileId]: annotations
-            }));
-        }
-    }, [centerViewerFiles, selectedFileIndex]);
+        if (!currentScanDate) return;
+        
+        updateCurrentScanViewerState(state => {
+            const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
+            if (validIndex >= 0 && state.centerViewerFiles[validIndex]) {
+                const fileId = getFileIdentifier(state.centerViewerFiles[validIndex].file);
+                return {
+                    ...state,
+                    pdfAnnotations: {
+                        ...state.pdfAnnotations,
+                        [fileId]: annotations
+                    }
+                };
+            }
+            return state;
+        });
+    }, [currentScanDate, updateCurrentScanViewerState]);
 
     // Handler for PDF annotation groups change in center viewer
     const handleCenterViewerPdfAnnotationGroupsChange = useCallback((groups: AnnotationGroup[]) => {
-        // Compute file identifier from current state
-        const validIndex = centerViewerFiles.length > 0 ? Math.min(selectedFileIndex, centerViewerFiles.length - 1) : -1;
-        if (validIndex >= 0 && centerViewerFiles[validIndex]) {
-            const fileId = getFileIdentifier(centerViewerFiles[validIndex].file);
-            setPdfAnnotationGroups(prev => ({
-                ...prev,
-                [fileId]: groups
-            }));
-            
-            // Generate/update the 2-pager brief PDF if we have groups
-            if (groups.length > 0) {
-                generateBriefPdf(groups, fileId);
+        if (!currentScanDate) return;
+        
+        updateCurrentScanViewerState(state => {
+            const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
+            if (validIndex >= 0 && state.centerViewerFiles[validIndex]) {
+                const fileId = getFileIdentifier(state.centerViewerFiles[validIndex].file);
+                const newState = {
+                    ...state,
+                    pdfAnnotationGroups: {
+                        ...state.pdfAnnotationGroups,
+                        [fileId]: groups
+                    }
+                };
+                
+                // Generate/update the 2-pager brief PDF if we have groups
+                if (groups.length > 0) {
+                    generateBriefPdf(groups, fileId, newState);
+                }
+                
+                return newState;
             }
-        }
-    }, [centerViewerFiles, selectedFileIndex]);
+            return state;
+        });
+    }, [currentScanDate, updateCurrentScanViewerState]);
 
     // Generate the 2-Pager Brief PDF from annotation groups
-    const generateBriefPdf = useCallback(async (groups: AnnotationGroup[], sourceFileId: string) => {
+    const generateBriefPdf = useCallback(async (groups: AnnotationGroup[], sourceFileId: string, state: ScanViewerState) => {
+        if (!currentScanDate) return;
+        
         try {
             const jsPDF = (await import('jspdf')).default;
             const doc = new jsPDF();
@@ -965,58 +1080,73 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             const pdfFile = new File([pdfBlob], '2-Pager Brief_ Maestro Construction Data.pdf', { type: 'application/pdf' });
             const pdfUrl = URL.createObjectURL(pdfFile);
             
-            // Check if brief file already exists
-            if (briefFileIndexRef.current !== null && briefFileIndexRef.current < centerViewerFiles.length) {
-                // Update existing brief file
-                const existingUrl = centerViewerFiles[briefFileIndexRef.current].url;
-                if (existingUrl) {
-                    URL.revokeObjectURL(existingUrl);
-                }
-                
-                setCenterViewerFiles(prev => prev.map((file, index) => 
-                    index === briefFileIndexRef.current 
-                        ? { ...file, url: pdfUrl, file: pdfFile }
-                        : file
-                ));
-            } else {
-                // Create new brief file entry
-                const newFileData = { name: pdfFile.name, url: pdfUrl, file: pdfFile };
-                setCenterViewerFiles(prev => {
-                    const newFiles = [...prev, newFileData];
-                    briefFileIndexRef.current = newFiles.length - 1;
-                    return newFiles;
-                });
+            // Add URL to ref for cleanup
+            if (!centerViewerUrlsRef.current[currentScanDate]) {
+                centerViewerUrlsRef.current[currentScanDate] = [];
             }
+            centerViewerUrlsRef.current[currentScanDate].push(pdfUrl);
+            
+            // Update state with brief file
+            updateCurrentScanViewerState(currentState => {
+                // Check if brief file already exists
+                if (currentState.briefFileIndex !== null && currentState.briefFileIndex < currentState.centerViewerFiles.length) {
+                    // Update existing brief file
+                    const existingUrl = currentState.centerViewerFiles[currentState.briefFileIndex].url;
+                    if (existingUrl) {
+                        URL.revokeObjectURL(existingUrl);
+                    }
+                    
+                    return {
+                        ...currentState,
+                        centerViewerFiles: currentState.centerViewerFiles.map((file, index) => 
+                            index === currentState.briefFileIndex 
+                                ? { ...file, url: pdfUrl, file: pdfFile }
+                                : file
+                        )
+                    };
+                } else {
+                    // Create new brief file entry
+                    const newFileData = { name: pdfFile.name, url: pdfUrl, file: pdfFile };
+                    return {
+                        ...currentState,
+                        centerViewerFiles: [...currentState.centerViewerFiles, newFileData],
+                        briefFileIndex: currentState.centerViewerFiles.length
+                    };
+                }
+            });
         } catch (error) {
             console.error('Error generating brief PDF:', error);
         }
-    }, [centerViewerFiles]);
+    }, [currentScanDate, updateCurrentScanViewerState]);
 
     // Ensure selectedFileIndex stays within bounds when files change
     useEffect(() => {
-        if (centerViewerFiles.length === 0) {
-            if (selectedFileIndex !== 0) {
-                setSelectedFileIndex(0);
+        const state = currentScanViewerState;
+        if (state.centerViewerFiles.length === 0) {
+            if (state.selectedFileIndex !== 0) {
+                updateCurrentScanViewerState(s => ({ ...s, selectedFileIndex: 0 }));
             }
-        } else if (selectedFileIndex >= centerViewerFiles.length) {
-            const newIndex = Math.max(0, centerViewerFiles.length - 1);
-            if (selectedFileIndex !== newIndex) {
-                setSelectedFileIndex(newIndex);
+        } else if (state.selectedFileIndex >= state.centerViewerFiles.length) {
+            const newIndex = Math.max(0, state.centerViewerFiles.length - 1);
+            if (state.selectedFileIndex !== newIndex) {
+                updateCurrentScanViewerState(s => ({ ...s, selectedFileIndex: newIndex }));
             }
         }
-    }, [centerViewerFiles.length, selectedFileIndex]); // Include selectedFileIndex to properly track changes
+    }, [currentScanViewerState, updateCurrentScanViewerState]);
 
     // Load CSV data when CSV file is selected in center viewer
     // Ensure selectedFileIndex is always valid - memoize to avoid reference errors
     const validSelectedIndex = useMemo(() => {
-        return centerViewerFiles.length > 0 
-            ? Math.min(selectedFileIndex, centerViewerFiles.length - 1)
+        const state = currentScanViewerState;
+        return state.centerViewerFiles.length > 0 
+            ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1)
             : -1;
-    }, [centerViewerFiles.length, selectedFileIndex]);
+    }, [currentScanViewerState]);
     
     const selectedCenterFile = useMemo(() => {
-        return validSelectedIndex >= 0 ? centerViewerFiles[validSelectedIndex] : undefined;
-    }, [centerViewerFiles, validSelectedIndex]);
+        const state = currentScanViewerState;
+        return validSelectedIndex >= 0 ? state.centerViewerFiles[validSelectedIndex] : undefined;
+    }, [currentScanViewerState, validSelectedIndex]);
     
     const centerFileType = useMemo(() => {
         return selectedCenterFile ? getFileType(selectedCenterFile.file) : 'other';
@@ -1024,34 +1154,32 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     
     useEffect(() => {
         if (centerFileType === 'csv' && selectedCenterFile) {
-            setCsvLoading(true);
-            setCsvError(null);
+            updateCurrentScanViewerState(state => ({ ...state, csvLoading: true, csvError: null }));
             selectedCenterFile.file.text()
                 .then(text => {
                     try {
                         const parsed = parseCsv(text);
-                        setCsvData(parsed);
+                        updateCurrentScanViewerState(state => ({ ...state, csvData: parsed, csvLoading: false }));
                     } catch (error) {
-                        setCsvError('Failed to parse CSV file');
+                        updateCurrentScanViewerState(state => ({ ...state, csvError: 'Failed to parse CSV file', csvLoading: false }));
                         console.error('CSV parsing error:', error);
                     }
-                    setCsvLoading(false);
                 })
                 .catch(error => {
-                    setCsvError('Failed to read CSV file');
+                    updateCurrentScanViewerState(state => ({ ...state, csvError: 'Failed to read CSV file', csvLoading: false }));
                     console.error('CSV read error:', error);
-                    setCsvLoading(false);
                 });
         } else {
-            setCsvData(null);
-            setCsvError(null);
+            updateCurrentScanViewerState(state => ({ ...state, csvData: null, csvError: null }));
         }
-    }, [centerFileType, selectedCenterFile]);
+    }, [centerFileType, selectedCenterFile, updateCurrentScanViewerState]);
 
     // Cleanup URLs on unmount
     useEffect(() => {
         return () => {
-            centerViewerUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+            Object.values(centerViewerUrlsRef.current).forEach(urls => {
+                urls.forEach(url => URL.revokeObjectURL(url));
+            });
         };
     }, []);
 
@@ -1127,8 +1255,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         switch (centerFileType) {
             case 'pdf':
                 const fileId = selectedCenterFile ? getFileIdentifier(selectedCenterFile.file) : '';
-                const currentAnnotations = fileId ? (pdfAnnotations[fileId] || {}) : {};
-                const currentGroups = fileId ? (pdfAnnotationGroups[fileId] || []) : [];
+                const currentAnnotations = fileId ? (currentScanViewerState.pdfAnnotations[fileId] || {}) : {};
+                const currentGroups = fileId ? (currentScanViewerState.pdfAnnotationGroups[fileId] || []) : [];
                 return (
                     <div className="flex-1 min-h-0 overflow-auto">
                         <PdfViewer
@@ -1147,7 +1275,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 );
 
             case 'csv':
-                if (csvLoading) {
+                if (currentScanViewerState.csvLoading) {
                     return (
                         <div className="flex-1 flex items-center justify-center">
                             <div className="text-center">
@@ -1157,23 +1285,23 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         </div>
                     );
                 }
-                if (csvError) {
+                if (currentScanViewerState.csvError) {
                     return (
                         <div className="flex-1 flex items-center justify-center">
                             <div className="text-center">
-                                <p className="text-red-400 mb-4">{csvError}</p>
+                                <p className="text-red-400 mb-4">{currentScanViewerState.csvError}</p>
                             </div>
                         </div>
                     );
                 }
-                if (!csvData || csvData.length === 0) {
+                if (!currentScanViewerState.csvData || currentScanViewerState.csvData.length === 0) {
                     return (
                         <div className="flex-1 flex items-center justify-center">
                             <p className="text-gray-400">CSV file is empty</p>
                         </div>
                     );
                 }
-                const headers = Object.keys(csvData[0]);
+                const headers = Object.keys(currentScanViewerState.csvData[0]);
                 return (
                     <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-auto">
                         <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-x-auto">
@@ -1188,7 +1316,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     </tr>
                                 </thead>
                                 <tbody className="text-gray-300">
-                                    {csvData.map((row, rowIdx) => (
+                                    {currentScanViewerState.csvData.map((row, rowIdx) => (
                                         <tr key={rowIdx} className="border-b border-gray-700 hover:bg-gray-700/50">
                                             {headers.map((header, colIdx) => (
                                                 <td key={colIdx} className="px-4 py-2">
@@ -1492,14 +1620,14 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     />
                     
                     {/* File tabs */}
-                    {(centerViewerFiles.length > 0) && (
+                    {(currentScanViewerState.centerViewerFiles.length > 0) && (
                         <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto flex-shrink-0 relative">
-                            {centerViewerFiles.map((file, index) => (
+                            {currentScanViewerState.centerViewerFiles.map((file, index) => (
                                 <div key={index} className="relative group">
                                     <button
-                                        onClick={() => setSelectedFileIndex(index)}
+                                        onClick={() => updateCurrentScanViewerState(state => ({ ...state, selectedFileIndex: index }))}
                                         className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors whitespace-nowrap flex items-center gap-2 ${
-                                            selectedFileIndex === index
+                                            currentScanViewerState.selectedFileIndex === index
                                                 ? 'bg-cyan-600 text-white'
                                                 : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                                         }`}
