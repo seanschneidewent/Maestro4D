@@ -31,12 +31,27 @@ export interface AnnotationGroup {
   createdAt: string; // ISO timestamp of creation
 }
 
+export interface ThreeDPoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface ThreeDAnnotation {
+  id: string;
+  start: ThreeDPoint;
+  end: ThreeDPoint;
+  color: string;
+  linkedInsightId?: string;
+}
+
 export interface ScanData {
   date: string;
   modelUrl?: string;
   pdfUrl?: string;
   pdfAnnotations?: Record<number, PdfAnnotation[]>;
   pdfAnnotationGroups?: AnnotationGroup[]; // Linked annotation groups with snapshots
+  threeDAnnotations?: ThreeDAnnotation[];
   insights: Insight[];
 }
 

@@ -324,7 +324,7 @@ const FullPanelChatView: React.FC<FullPanelChatViewProps> = ({ insight, chatStat
 
 
     return (
-        <div className="h-full flex flex-col bg-gray-900">
+        <div className="h-full flex flex-col">
              <div className="flex-shrink-0 p-3 border-b border-gray-700/80">
                 <button onClick={onBack} className="flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-cyan-400 transition-colors">
                     <ArrowLeftIcon />
@@ -721,10 +721,10 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
   const activeFilterCount = [filterSeverity, filterStatus, filterTrade].filter(f => f !== 'all').length;
 
   return (
-    <div className="w-full bg-gray-900/80 backdrop-blur-sm flex flex-col h-full overflow-hidden relative">
-      <div className={`w-full h-full flex flex-col transition-all duration-300 ${activeChatInsightId ? 'opacity-0 -translate-x-4 pointer-events-none' : 'opacity-100 translate-x-0'}`}>
-          <h2 className="text-xl font-bold text-white tracking-wide mb-2 p-4 flex-shrink-0">M4D Insights</h2>
-          <div className="mb-4 px-4 flex-shrink-0">
+    <div className="w-full bg-gradient-to-b from-gray-900 via-gray-900 to-black backdrop-blur-xl flex flex-col h-full overflow-hidden relative border-l border-white/5">
+      <div className={`w-full h-full flex flex-col transition-all duration-300 p-5 ${activeChatInsightId ? 'opacity-0 -translate-x-4 pointer-events-none' : 'opacity-100 translate-x-0'}`}>
+          <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight mb-6 flex-shrink-0">M4D Insights</h2>
+          <div className="mb-6 flex-shrink-0">
             <div className="flex items-center gap-1 rounded-md bg-gray-700/50 border border-gray-600/80 px-1 py-1">
               <button onClick={handleUploadClick} className="px-3 py-1.5 text-xs font-semibold text-gray-300 hover:bg-gray-600/70 rounded-md transition-colors" aria-label="Upload insights data">Upload</button>
               <div className="w-px h-6 bg-gray-600" />
@@ -801,7 +801,7 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
           </div>
           <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
           {isBulkSelectMode && selectedInsightIds.size > 0 && (
-              <div className="mx-4 mb-3 p-2 bg-gray-800/80 rounded-md flex items-center justify-between animate-fade-in-up-slow flex-shrink-0">
+              <div className="mb-3 p-2 bg-gray-800/80 rounded-md flex items-center justify-between animate-fade-in-up-slow flex-shrink-0">
                   <span className="text-sm font-semibold text-gray-300">{selectedInsightIds.size} item(s) selected</span>
                   <div className="flex items-center gap-2">
                       <button onClick={() => handleBulkAction('Acknowledge')} className="px-2.5 py-1 text-xs font-semibold text-yellow-300 bg-yellow-800/60 rounded hover:bg-yellow-800/90">Acknowledge</button>
@@ -811,7 +811,7 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
               </div>
           )}
           {sortedInsights.length > 0 ? (
-            <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+            <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
               {sortedInsights.map((insight) => (
                 <InsightCard 
                   key={insight.id} 

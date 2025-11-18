@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup } from '../types';
+import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation } from '../types';
 import { MaestroLogo, ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
@@ -815,6 +815,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         ));
     };
 
+    const handleThreeDAnnotationAdd = (annotation: ThreeDAnnotation) => {
+        setScans(prev => prev.map(scan => {
+            if (scan.date === currentScanDate) {
+                return {
+                    ...scan,
+                    threeDAnnotations: [...(scan.threeDAnnotations || []), annotation]
+                };
+            }
+            return scan;
+        }));
+    };
+
     // Center viewer file management handlers
     const handleCenterViewerAddFile = useCallback((files: File[]) => {
         if (!files || files.length === 0 || !currentScanDate) return;
@@ -825,14 +837,33 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 centerViewerUrlsRef.current[currentScanDate] = [];
             }
             
+            let glbUrl: string | undefined;
+
             const newFileData = files.map(file => {
                 if (!file || !(file instanceof File)) {
                     throw new Error('Invalid file object');
                 }
                 const url = URL.createObjectURL(file);
                 centerViewerUrlsRef.current[currentScanDate].push(url);
+                
+                if (getFileType(file) === 'glb') {
+                    glbUrl = url;
+                }
+
                 return { name: file.name, url, file };
             });
+
+            if (glbUrl) {
+                const oldUrl = glbUrlsRef.current[currentScanDate];
+                if (oldUrl && oldUrl !== glbUrl) {
+                    URL.revokeObjectURL(oldUrl);
+                }
+                glbUrlsRef.current[currentScanDate] = glbUrl;
+                
+                setScans(prev => prev.map(scan => 
+                    scan.date === currentScanDate ? { ...scan, modelUrl: glbUrl } : scan
+                ));
+            }
             
             updateCurrentScanViewerState(state => {
                 const wasEmpty = state.centerViewerFiles.length === 0;
@@ -852,6 +883,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleCenterViewerDeleteFile = useCallback((index: number) => {
         if (!currentScanDate) return;
+        
+        // Check if the file being deleted is the current model
+        const currentState = scanViewerState[currentScanDate];
+        if (currentState && currentState.centerViewerFiles[index]) {
+            const fileToDelete = currentState.centerViewerFiles[index];
+            setScans(prev => prev.map(scan => {
+                if (scan.date === currentScanDate && scan.modelUrl === fileToDelete.url) {
+                    return { ...scan, modelUrl: undefined };
+                }
+                return scan;
+            }));
+        }
         
         updateCurrentScanViewerState(state => {
             const fileToDelete = state.centerViewerFiles[index];
@@ -902,7 +945,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 pdfAnnotationGroups: newPdfAnnotationGroups
             };
         });
-    }, [currentScanDate, updateCurrentScanViewerState]);
+    }, [currentScanDate, updateCurrentScanViewerState, scanViewerState]);
 
     const handleCenterViewerFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -1224,7 +1267,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         if (isGlbActive) {
             return (
                 <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                    <Viewer modelUrl={currentScan?.modelUrl} onModelUpload={handleModelUpload} />
+                    <Viewer 
+                        modelUrl={currentScan?.modelUrl} 
+                        onModelUpload={handleModelUpload}
+                        annotations={currentScan?.threeDAnnotations}
+                        onAnnotationAdd={handleThreeDAnnotationAdd}
+                        insights={currentScan?.insights}
+                    />
                 </div>
             );
         }
@@ -1513,7 +1562,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
             <header className="flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 gap-4 min-h-[88px]">
                 <div className="flex items-center gap-4 flex-shrink-0">
-                    <MaestroLogo />
+                    <div 
+                        onClick={onBack}
+                        className="flex items-center gap-3 cursor-pointer group"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onBack(); }}
+                    >
+                        <ArrowLeftIcon className="h-5 w-5 text-gray-400 group-hover:text-cyan-400 transition-colors" />
+                        <MaestroLogo />
+                    </div>
                     <div className="w-px h-6 bg-gray-700"></div>
                      {isEditingName ? (
                         <input
@@ -1555,13 +1613,6 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         aria-expanded={isAgentsLauncherOpen}
                     >
                         <AgentsLogo />
-                    </button>
-                    <button 
-                        onClick={onBack}
-                        className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-4 flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 focus:outline-none focus:ring-cyan-400"
-                    >
-                        <ArrowLeftIcon className="h-5 w-5" />
-                        Back to Projects
                     </button>
                 </div>
             </header>
