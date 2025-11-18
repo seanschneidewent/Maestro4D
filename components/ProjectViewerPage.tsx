@@ -1511,7 +1511,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
-            <header className="flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[#1a1f2e] flex-shrink-0 gap-4 min-h-[88px]">
+            <header className="flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 gap-4 min-h-[88px]">
                 <div className="flex items-center gap-4 flex-shrink-0">
                     <MaestroLogo />
                     <div className="w-px h-6 bg-gray-700"></div>
@@ -1548,19 +1548,19 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     onToggleGlb={handleToggleGlb}
                 />
                 
-                <div className="flex-shrink-0 flex items-center gap-6">
+                <div className="flex-shrink-0 flex items-center gap-4">
                     <button 
                         onClick={() => setIsAgentsLauncherOpen(!isAgentsLauncherOpen)}
-                        className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg px-8 py-3 flex items-center justify-center shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-cyan-500 focus:outline-none focus:ring-cyan-400"
+                        className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-8 flex items-center justify-center shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-cyan-500 focus:outline-none focus:ring-cyan-400"
                         aria-expanded={isAgentsLauncherOpen}
                     >
                         <AgentsLogo />
                     </button>
                     <button 
                         onClick={onBack}
-                        className="flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition-colors"
+                        className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-4 flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 focus:outline-none focus:ring-cyan-400"
                     >
-                        <ArrowLeftIcon />
+                        <ArrowLeftIcon className="h-5 w-5" />
                         Back to Projects
                     </button>
                 </div>
