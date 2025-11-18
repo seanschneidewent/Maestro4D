@@ -1,48 +1,38 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Project, ScanData, Severity, InsightStatus, AgentType, AgentState } from './types';
-import { MaestroLogo, PlusIcon, SearchIcon, FolderIcon, CriticalDotIcon, AlertTriangleIcon, MediumPriorityIcon, LowPriorityIcon, ClockIcon, ChevronDownIcon, GridIcon, ListIcon, ArrowRightIcon, PencilIcon } from './components/Icons';
+import { MaestroLogo, PlusIcon, SearchIcon, FolderIcon, ChevronDownIcon, GridIcon, ListIcon, ArrowRightIcon, PencilIcon } from './components/Icons';
 import ProjectViewerPage from './components/ProjectViewerPage';
+import DashboardSidebar from './components/DashboardSidebar';
 
 // --- DASHBOARD SUB-COMPONENTS ---
 
 interface HeaderProps {
   onNewProject: () => void;
+  searchQuery: string;
+  onSearch: (query: string) => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onNewProject }) => (
-  <header className="flex items-center justify-between p-4 border-b border-[#2d3748] bg-[#1a1f2e]">
+const Header: React.FC<HeaderProps> = ({ onNewProject, searchQuery, onSearch }) => (
+  <header className="flex items-center justify-between p-4 border-b border-[#30363d] bg-[#161b22]">
     <MaestroLogo />
     <div className="flex items-center gap-4">
       <div className="relative">
-        <input type="text" placeholder="Search projects..." className="bg-[#0f1419] border border-[#2d3748] rounded-lg py-2 pl-10 pr-4 w-64 focus:outline-none focus:ring-2 focus:ring-[#4299e1]" />
+        <input 
+          type="text" 
+          placeholder="Search projects..." 
+          value={searchQuery}
+          onChange={(e) => onSearch(e.target.value)}
+          className="bg-[#0d1117] border border-[#30363d] rounded-lg py-2 pl-10 pr-4 w-64 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-gray-200 placeholder-gray-500" 
+        />
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
       </div>
-      <button onClick={onNewProject} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+      <button onClick={onNewProject} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-[0_0_10px_rgba(37,99,235,0.3)] hover:shadow-[0_0_15px_rgba(37,99,235,0.5)]">
         <PlusIcon className="h-5 w-5" />
         New Project
       </button>
     </div>
   </header>
-);
-
-interface StatCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number;
-  color?: string;
-}
-
-const StatCard: React.FC<StatCardProps> = ({ icon, label, value, color }) => (
-  <div className="bg-[#1a1f2e] p-6 rounded-xl border border-[#2d3748] flex items-center gap-4">
-    <div className={`p-3 rounded-lg ${color || 'bg-gray-600'}`}>
-      {icon}
-    </div>
-    <div>
-      <p className="text-gray-400 text-sm">{label}</p>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  </div>
 );
 
 // --- Custom Dropdown Component ---
@@ -86,7 +76,7 @@ const StatusDropdown: React.FC<StatusDropdownProps> = ({ status, onUpdateStatus,
             <ChevronDownIcon className={`h-3 w-3 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-            <div className="absolute z-10 mt-1 w-full bg-[#1a1f2e] rounded-md border border-gray-600 shadow-lg overflow-hidden p-1">
+            <div className="absolute z-10 mt-1 w-full bg-[#161b22] rounded-md border border-[#30363d] shadow-lg overflow-hidden p-1">
             <ul role="listbox">
                 <li>
                 <button
@@ -178,22 +168,22 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onSelect, onUpdateNa
   };
   
   return (
-    <div className="bg-[#1a1f2e] rounded-xl border border-[#2d3748] overflow-hidden group transition-all duration-300 hover:bg-white/5 hover:border-gray-700 hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/30">
+    <div className="bg-[#161b22] rounded-xl border border-[#30363d] overflow-hidden group transition-all duration-300 hover:bg-[#1c2128] hover:border-cyan-500/30 hover:-translate-y-1 hover:shadow-2xl hover:shadow-cyan-900/10">
     <div className="relative h-48 overflow-hidden">
       {project.imageUrl ? (
         <>
           <img src={project.imageUrl} alt={project.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+          <div className="absolute inset-0 bg-gradient-to-t from-[#161b22] via-transparent to-transparent opacity-90"></div>
         </>
       ) : (
         <>
           <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" aria-label="Upload project image file" />
           <button
             onClick={handleImageUploadClick}
-            className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600 hover:bg-gray-700 hover:text-gray-500 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cyan-500"
+            className="w-full h-full bg-[#0d1117] flex items-center justify-center text-gray-600 hover:bg-[#1a1f2e] hover:text-gray-500 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cyan-500"
             aria-label="Upload project image"
           >
-            <FolderIcon className="w-16 h-16" />
+            <FolderIcon className="w-16 h-16 opacity-20" />
           </button>
         </>
       )}
@@ -202,16 +192,16 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onSelect, onUpdateNa
         <StatusDropdown
           status={project.status}
           onUpdateStatus={onUpdateStatus}
-          buttonClassName={`text-xs font-bold py-1 pl-3 pr-2 rounded-full border bg-[#1a1f2e] border-gray-600 ${
+          buttonClassName={`text-xs font-bold py-1 pl-3 pr-2 rounded-full border bg-[#161b22]/90 backdrop-blur-sm border-[#30363d] shadow-lg ${
             project.status === 'Active' ? 'text-cyan-400' : 'text-gray-400'
           }`}
         />
       </div>
 
       <div className="absolute top-4 right-4 flex gap-2">
-        <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-sm text-white text-xs font-semibold py-1 px-2.5 rounded-full border border-white/20">🔴 {project.issues.critical}</div>
-        <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-sm text-white text-xs font-semibold py-1 px-2.5 rounded-full border border-white/20">⚠️ {project.issues.high}</div>
-        <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-sm text-white text-xs font-semibold py-1 px-2.5 rounded-full border border-white/20">📊 {project.issues.total}</div>
+        <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm text-gray-200 text-xs font-semibold py-1 px-2.5 rounded-full border border-white/10">🔴 {project.issues.critical}</div>
+        <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm text-gray-200 text-xs font-semibold py-1 px-2.5 rounded-full border border-white/10">⚠️ {project.issues.high}</div>
+        <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm text-gray-200 text-xs font-semibold py-1 px-2.5 rounded-full border border-white/10">📊 {project.issues.total}</div>
       </div>
     </div>
     <div className="p-6">
@@ -223,30 +213,33 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, onSelect, onUpdateNa
             onChange={(e) => setEditedName(e.target.value)}
             onBlur={handleSave}
             onKeyDown={handleKeyDown}
-            className="w-full bg-gray-700 border border-cyan-500 rounded-md py-0.5 px-2 -mx-2 text-lg font-bold text-white focus:outline-none"
+            className="w-full bg-[#0d1117] border border-cyan-500 rounded-md py-0.5 px-2 -mx-2 text-lg font-bold text-white focus:outline-none"
             onClick={(e) => e.stopPropagation()}
             aria-label={`Edit name for project ${project.name}`}
           />
         ) : (
           <div className="flex items-center gap-2 group/title cursor-text" onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}>
-            <h3 className="text-lg font-bold truncate">{project.name}</h3>
-            <PencilIcon className="h-4 w-4 text-gray-400 opacity-0 group-hover/title:opacity-100 transition-opacity" />
+            <h3 className="text-lg font-bold truncate text-gray-200 group-hover/title:text-white transition-colors">{project.name}</h3>
+            <PencilIcon className="h-4 w-4 text-gray-500 opacity-0 group-hover/title:opacity-100 transition-opacity" />
           </div>
         )}
-      <p className="text-sm text-gray-400 mt-1">{project.lastScan.type} &bull; {project.lastScan.date}</p>
+      <p className="text-sm text-gray-500 mt-1 font-medium">{project.lastScan.type} &bull; {project.lastScan.date}</p>
       <div className="mt-4">
         <div className="flex justify-between items-center mb-1">
-          <span className="text-xs font-semibold text-gray-300">Progress</span>
+          <span className="text-xs font-bold text-gray-400 tracking-wide uppercase">Progress</span>
           <span className="text-xs font-bold text-cyan-400">{project.progress}%</span>
         </div>
-        <div className="w-full bg-[#2d3748] rounded-full h-2">
-          <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-2 rounded-full" style={{ width: `${project.progress}%` }}></div>
+        <div className="w-full bg-[#0d1117] rounded-full h-2 border border-[#30363d]">
+          <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full shadow-[0_0_10px_rgba(34,211,238,0.3)]" style={{ width: `${project.progress}%` }}></div>
         </div>
       </div>
       <div className="flex justify-between items-center mt-6 text-sm">
-        <p className="text-gray-500">{`Last scan: ${project.lastScanTimeAgo}`}</p>
-        <button onClick={() => onSelect(project)} className="font-semibold text-blue-400 flex items-center gap-1 group-hover:gap-2 transition-all">
-          Open <ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        <p className="text-gray-500 text-xs font-medium flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-600"></span>
+            Last scan: {project.lastScanTimeAgo}
+        </p>
+        <button onClick={() => onSelect(project)} className="font-semibold text-blue-400 flex items-center gap-1 hover:text-blue-300 transition-all hover:gap-2 text-xs uppercase tracking-wider">
+          Open <ArrowRightIcon className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </button>
       </div>
     </div>
@@ -305,18 +298,18 @@ const ProjectListItem: React.FC<ProjectCardProps> = ({ project, onSelect, onUpda
     };
 
     return (
-    <div className="bg-[#1a1f2e] rounded-xl border border-[#2d3748] p-4 flex items-center gap-6 group transition-all duration-300 hover:bg-white/5 hover:border-gray-700 hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/30">
+    <div className="bg-[#161b22] rounded-xl border border-[#30363d] p-4 flex items-center gap-6 group transition-all duration-300 hover:bg-[#1c2128] hover:border-cyan-500/30 hover:-translate-y-1 hover:shadow-2xl hover:shadow-cyan-900/10">
       {project.imageUrl ? (
-        <img src={project.imageUrl} alt={project.name} className="w-32 h-20 object-cover rounded-lg flex-shrink-0" />
+        <img src={project.imageUrl} alt={project.name} className="w-32 h-20 object-cover rounded-lg flex-shrink-0 border border-[#30363d]" />
       ) : (
         <>
           <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" aria-label="Upload project image file" />
           <button
             onClick={handleImageUploadClick}
-            className="w-32 h-20 bg-gray-800 flex items-center justify-center rounded-lg flex-shrink-0 text-gray-600 hover:bg-gray-700 hover:text-gray-500 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cyan-500"
+            className="w-32 h-20 bg-[#0d1117] flex items-center justify-center rounded-lg flex-shrink-0 text-gray-600 hover:bg-[#1a1f2e] hover:text-gray-500 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cyan-500 border border-[#30363d]"
             aria-label="Upload project image"
           >
-            <FolderIcon className="w-10 h-10" />
+            <FolderIcon className="w-8 h-8 opacity-20" />
           </button>
         </>
       )}
@@ -329,44 +322,44 @@ const ProjectListItem: React.FC<ProjectCardProps> = ({ project, onSelect, onUpda
               onChange={(e) => setEditedName(e.target.value)}
               onBlur={handleSave}
               onKeyDown={handleKeyDown}
-              className="w-full bg-gray-700 border border-cyan-500 rounded-md py-0.5 px-2 -mx-2 text-lg font-bold text-white focus:outline-none"
+              className="w-full bg-[#0d1117] border border-cyan-500 rounded-md py-0.5 px-2 -mx-2 text-lg font-bold text-white focus:outline-none"
               aria-label={`Edit name for project ${project.name}`}
             />
         ) : (
             <div className="flex items-center gap-2 group/title cursor-text" onClick={() => setIsEditing(true)}>
-                <h3 className="text-lg font-bold truncate">{project.name}</h3>
-                <PencilIcon className="h-4 w-4 text-gray-400 opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                <h3 className="text-lg font-bold truncate text-gray-200 group-hover/title:text-white">{project.name}</h3>
+                <PencilIcon className="h-4 w-4 text-gray-500 opacity-0 group-hover/title:opacity-100 transition-opacity" />
             </div>
         )}
-        <p className="text-sm text-gray-400 mt-1">{project.lastScan.type} &bull; {project.lastScan.date}</p>
-        <p className="text-xs text-gray-500 mt-1">{`Last scan: ${project.lastScanTimeAgo}`}</p>
+        <p className="text-sm text-gray-500 mt-1 font-medium">{project.lastScan.type} &bull; {project.lastScan.date}</p>
+        <p className="text-xs text-gray-600 mt-1 font-medium">{`Last scan: ${project.lastScanTimeAgo}`}</p>
       </div>
       <div className="flex-shrink-0 w-32">
         <StatusDropdown
           status={project.status}
           onUpdateStatus={onUpdateStatus}
-          buttonClassName={`bg-[#1a1f2e] border border-gray-600 rounded-md py-1 px-3 text-xs font-bold ${project.status === 'Active' ? 'text-cyan-400' : 'text-gray-400'}`}
+          buttonClassName={`bg-[#0d1117] border border-[#30363d] rounded-md py-1.5 px-3 text-xs font-bold hover:border-gray-500 transition-colors ${project.status === 'Active' ? 'text-cyan-400' : 'text-gray-400'}`}
         />
       </div>
       <div className="flex-shrink-0 flex items-center gap-4 text-sm">
-         <div className="flex items-center gap-1.5 text-white font-semibold">
-           <span className="text-[#f56565]">🔴</span> {project.issues.critical} <span className="text-gray-400">Critical</span>
+         <div className="flex items-center gap-1.5 text-gray-300 font-semibold">
+           <span className="text-red-500 drop-shadow-[0_0_5px_rgba(239,68,68,0.5)]">●</span> {project.issues.critical} <span className="text-gray-500 text-xs uppercase">Critical</span>
          </div>
-         <div className="flex items-center gap-1.5 text-white font-semibold">
-           <span className="text-[#ed8936]">⚠️</span> {project.issues.high} <span className="text-gray-400">High</span>
+         <div className="flex items-center gap-1.5 text-gray-300 font-semibold">
+           <span className="text-orange-500 drop-shadow-[0_0_5px_rgba(249,115,22,0.5)]">●</span> {project.issues.high} <span className="text-gray-500 text-xs uppercase">High</span>
          </div>
       </div>
       <div className="w-32 flex-shrink-0">
           <div className="flex justify-between items-center mb-1">
-            <span className="text-xs font-semibold text-gray-300">Progress</span>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Progress</span>
             <span className="text-xs font-bold text-cyan-400">{project.progress}%</span>
           </div>
-          <div className="w-full bg-[#2d3748] rounded-full h-2">
-            <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-2 rounded-full" style={{ width: `${project.progress}%` }}></div>
+          <div className="w-full bg-[#0d1117] rounded-full h-2 border border-[#30363d]">
+            <div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full rounded-full shadow-[0_0_8px_rgba(34,211,238,0.3)]" style={{ width: `${project.progress}%` }}></div>
           </div>
       </div>
-      <button onClick={() => onSelect(project)} className="font-semibold text-blue-400 flex items-center gap-1 group-hover:gap-2 transition-all bg-blue-500/10 hover:bg-blue-500/20 px-4 py-2 rounded-lg">
-          Open <ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+      <button onClick={() => onSelect(project)} className="font-semibold text-blue-400 flex items-center gap-1 group-hover:gap-2 transition-all bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/20 hover:border-blue-500/40 px-4 py-2 rounded-lg text-sm uppercase tracking-wide">
+          Open <ArrowRightIcon className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
       </button>
     </div>
     );
@@ -402,36 +395,23 @@ const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject, onNewP
         .sort((a, b) => new Date(b.lastScan.date).getTime() - new Date(a.lastScan.date).getTime());
     }, [projects, searchQuery, statusFilter]);
   
-    const totalProjects = projects.length;
-    const criticalIssues = projects.reduce((sum, p) => sum + p.issues.critical, 0);
-    const highPriority = projects.reduce((sum, p) => sum + p.issues.high, 0);
-    const mediumPriority = projects.reduce((sum, p) => sum + (p.issues.medium || 0), 0);
-    const lowPriority = projects.reduce((sum, p) => sum + (p.issues.low || 0), 0);
-    const lastScanProject = projects.sort((a, b) => new Date(b.lastScan.date).getTime() - new Date(a.lastScan.date).getTime())[0];
-    const lastScan = lastScanProject ? lastScanProject.lastScanTimeAgo : 'N/A';
-  
     return (
-        <div className="h-screen flex flex-col">
-            <Header onNewProject={onNewProject} />
-            <main className="flex-1 bg-[#1a1f2e] p-8 overflow-y-auto">
-                <h1 className="text-3xl font-bold">My Projects</h1>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6 my-8">
-                    <StatCard icon={<FolderIcon />} label="Total Projects" value={totalProjects} />
-                    <StatCard icon={<CriticalDotIcon />} label="Critical Issues" value={criticalIssues} color="bg-red-500/20" />
-                    <StatCard icon={<AlertTriangleIcon />} label="High Priority" value={highPriority} color="bg-orange-500/20" />
-                    <StatCard icon={<MediumPriorityIcon />} label="Medium Priority" value={mediumPriority} color="bg-yellow-500/20" />
-                    <StatCard icon={<LowPriorityIcon />} label="Low Priority" value={lowPriority} color="bg-green-500/20" />
-                    <StatCard icon={<ClockIcon />} label="Last Scan" value={lastScan} />
-                </div>
+        <div className="h-screen flex flex-col overflow-hidden">
+            <Header onNewProject={onNewProject} searchQuery={searchQuery} onSearch={setSearchQuery} />
+            
+            <div className="flex flex-1 overflow-hidden">
+                <main className="flex-1 bg-[#0d1117] p-8 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-8">
+                        <h1 className="text-3xl font-bold text-gray-100">My Projects</h1>
+                    </div>
 
-                <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center gap-2 bg-[#0f1419] p-1 rounded-lg border border-[#2d3748]">
+                    <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-2 bg-[#161b22] p-1 rounded-lg border border-[#30363d]">
                     {statusTabs.map(tab => (
                         <button 
                         key={tab}
                         onClick={() => setStatusFilter(tab)}
-                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${statusFilter === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-slate-800'}`}
+                        className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${statusFilter === tab ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-400 hover:bg-[#21262d] hover:text-gray-200'}`}
                         >
                         {tab}
                         </button>
@@ -440,13 +420,13 @@ const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject, onNewP
                     <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 text-sm text-gray-400">
                         <span>Sort by:</span>
-                        <button className="flex items-center gap-1 font-semibold text-white hover:text-cyan-400">
+                        <button className="flex items-center gap-1 font-semibold text-gray-200 hover:text-cyan-400 transition-colors">
                         Most Recent <ChevronDownIcon />
                         </button>
                     </div>
-                    <div className="flex items-center gap-1 bg-[#0f1419] p-1 rounded-lg border border-[#2d3748]">
-                        <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-slate-800'}`}><GridIcon /></button>
-                        <button onClick={() => setViewMode('list')} className={`p-2 rounded-md ${viewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-slate-800'}`}><ListIcon /></button>
+                    <div className="flex items-center gap-1 bg-[#161b22] p-1 rounded-lg border border-[#30363d]">
+                        <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-400 hover:bg-[#21262d] hover:text-gray-200'}`}><GridIcon /></button>
+                        <button onClick={() => setViewMode('list')} className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-gray-400 hover:bg-[#21262d] hover:text-gray-200'}`}><ListIcon /></button>
                     </div>
                     </div>
                 </div>
@@ -462,13 +442,15 @@ const Dashboard: React.FC<DashboardProps> = ({ projects, onSelectProject, onNewP
                         </div>
                     )
                 ) : (
-                    <div className="text-center py-16 bg-[#0f1419] rounded-lg border-2 border-dashed border-[#2d3748]">
-                        <p className="text-5xl mb-4">📂</p>
-                        <h3 className="text-xl font-semibold text-white">No Projects Yet</h3>
-                        <p className="text-gray-400 mt-2">Click "New Project" to get started.</p>
+                    <div className="text-center py-16 bg-[#161b22] rounded-lg border-2 border-dashed border-[#30363d]">
+                        <p className="text-5xl mb-4 grayscale opacity-50">📂</p>
+                        <h3 className="text-xl font-semibold text-gray-200">No Projects Yet</h3>
+                        <p className="text-gray-500 mt-2">Click "New Project" to get started.</p>
                     </div>
                 )}
-            </main>
+                </main>
+                <DashboardSidebar projects={projects} />
+            </div>
         </div>
     );
 }

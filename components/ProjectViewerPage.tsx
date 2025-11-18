@@ -378,7 +378,6 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isPdfToolsOpen, setIsPdfToolsOpen] = useState<boolean>(false);
     const [pdfToolbarHandlers, setPdfToolbarHandlers] = useState<PdfToolbarHandlers | null>(null);
     const pdfToolsButtonRef = useRef<HTMLButtonElement>(null);
-    const [toolbarPosition, setToolbarPosition] = useState<{ top: number; right: number } | null>(null);
     
     // Report overlay state
     type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
@@ -1219,48 +1218,6 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }
     }, [centerFileType, selectedCenterFile]);
 
-    // Calculate toolbar position relative to button
-    useEffect(() => {
-        if (!isPdfToolsOpen || !pdfToolsButtonRef.current) {
-            setToolbarPosition(null);
-            return;
-        }
-
-        const updatePosition = () => {
-            if (!pdfToolsButtonRef.current) return;
-            const button = pdfToolsButtonRef.current;
-            const tabBarContainer = button.offsetParent as HTMLElement;
-            if (!tabBarContainer) return;
-            const viewerContainer = tabBarContainer.parentElement as HTMLElement;
-            if (!viewerContainer) return;
-
-            // Button is positioned at right-2 (8px) and top-2 (8px) within tab bar
-            // Calculate position relative to viewer container
-            // offsetTop is relative to offsetParent (tab bar), so we need tab bar's offsetTop too
-            const tabBarOffsetTop = tabBarContainer.offsetTop;
-            const buttonOffsetTop = button.offsetTop;
-            
-            // Position toolbar to the left of button, aligned vertically
-            const buttonWidth = button.offsetWidth;
-            const gap = 8;
-            const rightOffset = buttonWidth + gap + 8; // 8px is button's right-2 offset
-            
-            setToolbarPosition({
-                top: tabBarOffsetTop + buttonOffsetTop,
-                right: rightOffset,
-            });
-        };
-
-        // Use requestAnimationFrame to ensure DOM is ready
-        requestAnimationFrame(updatePosition);
-        window.addEventListener('resize', updatePosition);
-        window.addEventListener('scroll', updatePosition, true);
-        return () => {
-            window.removeEventListener('resize', updatePosition);
-            window.removeEventListener('scroll', updatePosition, true);
-        };
-    }, [isPdfToolsOpen]);
-
     // Render center viewer content based on file type
     const renderCenterViewerContent = () => {
         // If GLB mode is active, show the GLB viewer for the current scan
@@ -1657,72 +1614,27 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         accept=".pdf,.csv,.glb,.png,.jpg,.jpeg,.gif,.webp"
                     />
                     
-                    {/* File tabs - hidden when GLB mode is active or List Data mode is active */}
-                    {!isGlbActive && !isListDataActive && (currentScanViewerState.centerViewerFiles.length > 0) && (
-                        <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto flex-shrink-0 relative">
-                            {currentScanViewerState.centerViewerFiles.map((file, index) => (
-                                <div key={index} className="relative group">
-                                    <button
-                                        onClick={() => updateCurrentScanViewerState(state => ({ ...state, selectedFileIndex: index }))}
-                                        className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors whitespace-nowrap flex items-center gap-2 ${
-                                            currentScanViewerState.selectedFileIndex === index
-                                                ? 'bg-cyan-600 text-white'
-                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                                        }`}
-                                    >
-                                        <span>{file.name}</span>
-                                        <span
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleCenterViewerDeleteFile(index);
-                                            }}
-                                            className="ml-1 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 transition-colors focus:outline-none focus:ring-1 focus:ring-red-400 cursor-pointer"
-                                            aria-label={`Delete ${file.name}`}
-                                            role="button"
-                                            tabIndex={0}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter' || e.key === ' ') {
-                                                    e.stopPropagation();
-                                                    e.preventDefault();
-                                                    handleCenterViewerDeleteFile(index);
-                                                }
-                                            }}
-                                        >
-                                            <CloseIcon className="h-3 w-3" />
-                                        </span>
-                                    </button>
-                                </div>
-                            ))}
-                            <button
-                                onClick={() => centerViewerFileInputRef.current?.click()}
-                                className="px-3 py-2 bg-gray-700 text-gray-300 hover:bg-gray-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 flex items-center gap-2"
-                                aria-label="Add Files"
-                            >
-                                <PlusIcon className="h-4 w-4" />
-                            </button>
-                            {centerFileType === 'pdf' && (
-                                <button
-                                    ref={pdfToolsButtonRef}
-                                    onClick={() => setIsPdfToolsOpen(true)}
-                                    className="absolute top-2 right-2 z-10 p-2 bg-gray-700/80 backdrop-blur-sm text-white rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto"
-                                    aria-label="Expand PDF tools"
-                                    type="button"
-                                >
-                                    <PencilIcon className="h-5 w-5" />
-                                </button>
-                            )}
-                        </div>
+                    {/* PDF Tools Button */}
+                    {centerFileType === 'pdf' && (
+                        <button
+                            ref={pdfToolsButtonRef}
+                            onClick={() => setIsPdfToolsOpen(!isPdfToolsOpen)}
+                            className={`absolute top-4 right-4 z-20 p-2 backdrop-blur-sm text-white rounded-md border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors shadow-lg ${
+                                isPdfToolsOpen 
+                                    ? 'bg-cyan-600 border-cyan-500 hover:bg-cyan-700' 
+                                    : 'bg-gray-800/80 border-white/10 hover:bg-gray-700'
+                            }`}
+                            aria-label="Toggle PDF tools"
+                            aria-pressed={isPdfToolsOpen}
+                            type="button"
+                        >
+                            <PencilIcon className="h-5 w-5" />
+                        </button>
                     )}
                     
-                    {/* PDF Tools Panel - rendered outside tab bar to allow overflow */}
-                    {centerFileType === 'pdf' && isPdfToolsOpen && pdfToolbarHandlers && toolbarPosition && (
-                        <div 
-                            className="absolute z-30"
-                            style={{
-                                top: `${toolbarPosition.top}px`,
-                                right: `${toolbarPosition.right}px`,
-                            }}
-                        >
+                    {/* PDF Tools Panel */}
+                    {centerFileType === 'pdf' && isPdfToolsOpen && pdfToolbarHandlers && (
+                        <div className="absolute top-16 right-4 z-30 shadow-xl">
                             <PdfToolsPanel
                                 {...pdfToolbarHandlers}
                                 onClose={() => setIsPdfToolsOpen(false)}
