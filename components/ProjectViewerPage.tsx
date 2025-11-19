@@ -417,6 +417,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
     const [isGlbActive, setIsGlbActive] = useState(false);
+    const [isBimActive, setIsBimActive] = useState(false);
     const [isListDataActive, setIsListDataActive] = useState(false);
     
     // Per-scan viewer state map - keyed by scan date
@@ -657,7 +658,23 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     };
 
     const handleToggleGlb = () => {
-        setIsGlbActive(prev => !prev);
+        setIsGlbActive(prev => {
+            const newValue = !prev;
+            if (newValue) {
+                setIsBimActive(false);
+            }
+            return newValue;
+        });
+    };
+
+    const handleToggleBim = () => {
+        setIsBimActive(prev => {
+            const newValue = !prev;
+            if (newValue) {
+                setIsGlbActive(false);
+            }
+            return newValue;
+        });
     };
 
     const handleToggleListData = () => {
@@ -1772,8 +1789,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
-            <header className="flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 gap-4 min-h-[88px]">
-                <div className="flex items-center gap-3 flex-shrink-0">
+            <header className="relative flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 min-h-[88px]">
+                <div className="relative z-20 flex items-center gap-3 flex-shrink-0">
                     <div 
                         onClick={onBack}
                         className="cursor-pointer group"
@@ -1802,21 +1819,27 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     )}
                 </div>
 
-                <TimelineScrubber 
-                    scanDates={[...new Set(scans.map(s => s.date))]}
-                    currentDate={currentScanDate}
-                    onDateChange={handleDateChange}
-                    onAddScan={handleAddScan}
-                    isDeleteMode={isDeleteMode}
-                    selectedScanDates={selectedScanDates}
-                    onToggleDeleteMode={handleToggleDeleteMode}
-                    onToggleScanSelection={handleToggleScanSelection}
-                    onConfirmDelete={handleConfirmDelete}
-                    isGlbActive={isGlbActive}
-                    onToggleGlb={handleToggleGlb}
-                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="pointer-events-auto w-full max-w-[calc(100%-500px)]">
+                        <TimelineScrubber 
+                            scanDates={[...new Set(scans.map(s => s.date))]}
+                            currentDate={currentScanDate}
+                            onDateChange={handleDateChange}
+                            onAddScan={handleAddScan}
+                            isDeleteMode={isDeleteMode}
+                            selectedScanDates={selectedScanDates}
+                            onToggleDeleteMode={handleToggleDeleteMode}
+                            onToggleScanSelection={handleToggleScanSelection}
+                            onConfirmDelete={handleConfirmDelete}
+                            isGlbActive={isGlbActive}
+                            onToggleGlb={handleToggleGlb}
+                            isBimActive={isBimActive}
+                            onToggleBim={handleToggleBim}
+                        />
+                    </div>
+                </div>
                 
-                <div className="flex-shrink-0 flex items-center gap-4">
+                <div className="relative z-20 flex-shrink-0 flex items-center gap-4">
                     <button 
                         onClick={() => setIsAgentsLauncherOpen(!isAgentsLauncherOpen)}
                         className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-8 flex items-center justify-center shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-cyan-500 focus:outline-none focus:ring-cyan-400"

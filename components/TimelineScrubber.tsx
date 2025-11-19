@@ -13,6 +13,8 @@ interface TimelineScrubberProps {
   onConfirmDelete?: () => void;
   isGlbActive?: boolean;
   onToggleGlb?: () => void;
+  isBimActive?: boolean;
+  onToggleBim?: () => void;
 }
 
 const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ 
@@ -26,7 +28,9 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
   onToggleScanSelection,
   onConfirmDelete,
   isGlbActive = false,
-  onToggleGlb
+  onToggleGlb,
+  isBimActive = false,
+  onToggleBim
 }) => {
   const timelineRef = useRef<HTMLDivElement>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -284,6 +288,16 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({
         >
           <PlusIcon className="h-6 w-6" />
       </button>
+
+      {onToggleBim && (
+        <button
+          onClick={onToggleBim}
+          className={`${buttonClass} ${isBimActive ? activeClass : ''}`}
+          aria-label="Toggle BIM"
+        >
+          <span className="font-bold">BIM</span>
+        </button>
+      )}
     </div>
   );
 };
