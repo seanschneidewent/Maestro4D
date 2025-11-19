@@ -172,7 +172,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                                     </tr>
                                 </thead>
                                 <tbody className="text-gray-300">
-                                    {currentScanViewerState.csvData.map((row, rowIdx) => (
+                                    {csvData.map((row, rowIdx) => (
                                         <tr key={rowIdx} className="border-b border-gray-700 hover:bg-gray-700/50">
                                             {headers.map((header, colIdx) => (
                                                 <td key={colIdx} className="px-4 py-2">
@@ -400,6 +400,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     
     // State for tracking active insight chat in right panel
     const [activeInsightChatId, setActiveInsightChatId] = useState<string | null>(null);
+    const [highlightedInsightId, setHighlightedInsightId] = useState<string | null>(null);
     
     // File type detection utility - defined early to avoid temporal dead zone issues
     const getFileType = (file: File): 'pdf' | 'csv' | 'glb' | 'image' | 'other' => {
@@ -827,6 +828,35 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }));
     };
 
+    const handleThreeDAnnotationSelect = (annotationId: string | null) => {
+        if (!annotationId) {
+            setHighlightedInsightId(null);
+            return;
+        }
+        // Find the annotation in the current scan to get the linkedInsightId
+        const annotation = currentScan?.threeDAnnotations?.find(a => a.id === annotationId);
+        if (annotation?.linkedInsightId) {
+            setHighlightedInsightId(annotation.linkedInsightId);
+        } else {
+            setHighlightedInsightId(null);
+        }
+    };
+
+    const handleThreeDAnnotationDelete = (annotationId: string) => {
+        if (!currentScanDate) return;
+        
+        setScans(prev => prev.map(scan => {
+            if (scan.date === currentScanDate) {
+                return {
+                    ...scan,
+                    threeDAnnotations: (scan.threeDAnnotations || []).filter(a => a.id !== annotationId)
+                };
+            }
+            return scan;
+        }));
+        setHighlightedInsightId(null); // Clear selection
+    };
+
     // Center viewer file management handlers
     const handleCenterViewerAddFile = useCallback((files: File[]) => {
         if (!files || files.length === 0 || !currentScanDate) return;
@@ -1244,11 +1274,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Cleanup URLs on unmount
     useEffect(() => {
         return () => {
-            Object.values(centerViewerUrlsRef.current).forEach(urls => {
+            (Object.values(centerViewerUrlsRef.current) as string[][]).forEach(urls => {
                 urls.forEach(url => URL.revokeObjectURL(url));
             });
             // Cleanup GLB URLs
-            Object.values(glbUrlsRef.current).forEach(url => {
+            (Object.values(glbUrlsRef.current) as string[]).forEach(url => {
                 URL.revokeObjectURL(url);
             });
         };
@@ -1273,6 +1303,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         annotations={currentScan?.threeDAnnotations}
                         onAnnotationAdd={handleThreeDAnnotationAdd}
                         insights={currentScan?.insights}
+                        onAnnotationSelect={handleThreeDAnnotationSelect}
+                        onAnnotationDelete={handleThreeDAnnotationDelete}
                     />
                 </div>
             );
@@ -1378,7 +1410,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             case 'glb':
                 return (
                     <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                        <Viewer modelUrl={selectedCenterFile.url} />
+                        <Viewer 
+                            modelUrl={selectedCenterFile.url}
+                            onModelUpload={handleModelUpload}
+                            annotations={currentScan?.threeDAnnotations}
+                            onAnnotationAdd={handleThreeDAnnotationAdd}
+                            insights={currentScan?.insights}
+                            onAnnotationSelect={handleThreeDAnnotationSelect}
+                            onAnnotationDelete={handleThreeDAnnotationDelete}
+                        />
                     </div>
                 );
 
@@ -1648,6 +1688,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                 onOpenInsightChat={setActiveInsightChatId}
                                 onCloseInsightChat={() => setActiveInsightChatId(null)}
                                 activeInsightChatId={activeInsightChatId}
+                                highlightedInsightId={highlightedInsightId}
                             />
                         </div>
                     )}

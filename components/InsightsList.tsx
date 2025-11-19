@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Insight, InsightType, Severity, InsightStatus, Note, Message } from '../types';
 import { InsightTypeIcon, SeverityIcon, BarsArrowUpIcon, BarsArrowDownIcon, CheckIcon, FunnelIcon, ArrowDownTrayIcon, Squares2X2Icon, SparklesIcon, MarketIntelIcon, SpecSearchIcon, ChevronDownIcon, ArrowLeftIcon, ChatBubbleIcon } from './Icons';
@@ -13,6 +12,7 @@ interface InsightsListProps {
   onOpenInsightChat?: (insightId: string) => void;
   onCloseInsightChat?: () => void;
   activeInsightChatId?: string | null; // Sync with parent state
+  highlightedInsightId?: string | null;
 }
 
 const TRADES = ['Unassigned', 'GC', 'Structural', 'MEP', 'Plumbing', 'Electrical', 'HVAC', 'Drywall', 'Finishes'];
@@ -224,6 +224,8 @@ const generateTailoredAnalysis = (insight: Insight): string => {
   
   actions.push(`4. Notify downstream trades when complete`);
   
+  actions.push(`4. Notify downstream trades when complete`);
+  
   analysis += actions.join('\n') + '\n\n';
   
   // Add spec references if found in description
@@ -415,9 +417,11 @@ interface InsightCardProps {
   isBulkSelectMode: boolean;
   isBulkSelected: boolean;
   onBulkSelectToggle: (insightId: string) => void;
+  isHighlighted?: boolean;
+  domRef?: (el: HTMLDivElement | null) => void;
 }
 
-const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSelectMode, isBulkSelected, onBulkSelectToggle }) => {
+const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSelectMode, isBulkSelected, onBulkSelectToggle, isHighlighted, domRef }) => {
     const severityColorClasses = {
         [Severity.Critical]: { select: 'bg-[#f56565]', gradient: 'from-red-600 via-red-500 to-red-400' },
         [Severity.High]: { select: 'bg-[#ed8936]', gradient: 'from-orange-600 via-orange-500 to-orange-400' },
@@ -427,7 +431,13 @@ const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSe
     
     const severityClasses = severityColorClasses[insight.severity] || { select: 'bg-cyan-500', gradient: 'from-cyan-600 via-cyan-500 to-cyan-400' };
   
-    const wrapperClasses = `flex-1 rounded-lg p-px transition-all duration-200 group/card ${isBulkSelected ? severityClasses.select : 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:p-[2px]'}`;
+    const wrapperClasses = `flex-1 rounded-lg p-px transition-all duration-200 group/card ${
+        isBulkSelected 
+            ? severityClasses.select 
+            : isHighlighted
+                ? 'bg-gradient-to-r from-yellow-400 to-orange-500 shadow-lg shadow-orange-500/20 scale-[1.02] z-10'
+                : 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:p-[2px]'
+    }`;
 
     const handleCardClick = () => {
         if (isBulkSelectMode) {
@@ -436,7 +446,7 @@ const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSe
     };
 
     return (
-        <div className="flex items-start gap-3">
+        <div className="flex items-start gap-3" ref={domRef}>
             {isBulkSelectMode && (
                 <div className="pt-5 flex-shrink-0">
                     <input
@@ -500,8 +510,9 @@ const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSe
 };
 
 
-const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights, onInsightStatusChange, onAddNote, onReassignTrade, onOpenInsightChat, onCloseInsightChat, activeInsightChatId: parentActiveInsightChatId }) => {
+const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights, onInsightStatusChange, onAddNote, onReassignTrade, onOpenInsightChat, onCloseInsightChat, activeInsightChatId: parentActiveInsightChatId, highlightedInsightId }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   
   // View state - sync with parent if provided
   const [activeChatInsightId, setActiveChatInsightId] = useState<string | null>(null);
@@ -512,6 +523,13 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
       setActiveChatInsightId(parentActiveInsightChatId);
     }
   }, [parentActiveInsightChatId]);
+
+  // Scroll to highlighted insight
+  useEffect(() => {
+      if (highlightedInsightId && cardRefs.current[highlightedInsightId]) {
+          cardRefs.current[highlightedInsightId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+  }, [highlightedInsightId]);
   
   // Chat state - now stores descriptions instead of messages
   const [chatHistories, setChatHistories] = useState<Record<string, { descriptions: Record<InsightAgent, string>, activeAgent: InsightAgent }>>({});
@@ -820,6 +838,8 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
                   isBulkSelectMode={isBulkSelectMode}
                   isBulkSelected={selectedInsightIds.has(insight.id)}
                   onBulkSelectToggle={handleToggleBulkSelection}
+                  isHighlighted={insight.id === highlightedInsightId}
+                  domRef={(el) => { cardRefs.current[insight.id] = el; }}
                 />
               ))}
             </div>

@@ -1,10 +1,8 @@
-
-
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CubeIcon, PencilIcon, CloseIcon } from './Icons';
+import { CubeIcon, PencilIcon, CloseIcon, TrashIcon } from './Icons';
 import { ThreeDAnnotation, ThreeDPoint, Insight } from '../types';
 
 interface ViewerProps {
@@ -13,9 +11,19 @@ interface ViewerProps {
   annotations?: ThreeDAnnotation[];
   onAnnotationAdd?: (annotation: ThreeDAnnotation) => void;
   insights?: Insight[];
+  onAnnotationSelect?: (annotationId: string | null) => void;
+  onAnnotationDelete?: (annotationId: string) => void;
 }
 
-const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = [], onAnnotationAdd, insights = [] }) => {
+const Viewer: React.FC<ViewerProps> = ({ 
+    modelUrl, 
+    onModelUpload, 
+    annotations = [], 
+    onAnnotationAdd, 
+    insights = [],
+    onAnnotationSelect,
+    onAnnotationDelete
+}) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
@@ -28,6 +36,9 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
   const [currentPoint, setCurrentPoint] = useState<ThreeDPoint | null>(null);
   const [showInsightModal, setShowInsightModal] = useState(false);
   const [tempAnnotation, setTempAnnotation] = useState<Partial<ThreeDAnnotation> | null>(null);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [isDeleteMode, setIsDeleteMode] = useState(false);
+  const [annotationsToDelete, setAnnotationsToDelete] = useState<string[]>([]);
 
   const loaderRef = useRef<((url: string) => void) | null>(null);
   const modelRemoverRef = useRef<(() => void) | null>(null);
@@ -67,25 +78,38 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
         if (child instanceof THREE.Line) {
             child.geometry.dispose();
             (child.material as THREE.Material).dispose();
+        } else if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
         }
     }
 
     // Add annotations
     annotations.forEach(ann => {
-        const line = createLine(ann.start, ann.end, ann.color);
+        const isSelected = ann.id === selectedAnnotationId;
+        const isMarkedForDeletion = annotationsToDelete.includes(ann.id);
+        const color = isMarkedForDeletion ? '#ef4444' : (isSelected ? '#ffff00' : ann.color); // Red if deleting, Yellow if selected
+
+        const line = createLine(ann.start, ann.end, color);
+        line.userData = { id: ann.id, type: 'annotation' };
         annotationsGroupRef.current?.add(line);
         
         // Add markers at ends
-        const markerGeo = new THREE.SphereGeometry(0.05, 16, 16);
-        const markerMat = new THREE.MeshBasicMaterial({ color: ann.color });
+        const markerGeo = new THREE.SphereGeometry(0.025, 16, 16); // Smaller points (0.05 -> 0.025)
+        const markerMat = new THREE.MeshBasicMaterial({ color: color });
+        
         const startMarker = new THREE.Mesh(markerGeo, markerMat);
         startMarker.position.set(ann.start.x, ann.start.y, ann.start.z);
+        startMarker.userData = { id: ann.id, type: 'annotation' };
+        
         const endMarker = new THREE.Mesh(markerGeo, markerMat);
         endMarker.position.set(ann.end.x, ann.end.y, ann.end.z);
+        endMarker.userData = { id: ann.id, type: 'annotation' };
+
         annotationsGroupRef.current?.add(startMarker);
         annotationsGroupRef.current?.add(endMarker);
     });
-  }, [annotations, modelLoaded]);
+  }, [annotations, modelLoaded, selectedAnnotationId, annotationsToDelete]);
 
   // Render preview line
   useEffect(() => {
@@ -94,7 +118,7 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
     // Manage start point marker
     if (startPoint) {
         if (!startPointMarkerRef.current) {
-            const geo = new THREE.SphereGeometry(0.08, 16, 16);
+            const geo = new THREE.SphereGeometry(0.04, 16, 16); // Slightly larger for editing
             const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
             const mesh = new THREE.Mesh(geo, mat);
             sceneRef.current.add(mesh);
@@ -139,13 +163,9 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
 
   // Handle click on canvas
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!isEditing || !modelRef.current || !cameraRef.current || !sceneRef.current) return;
+    if (!modelRef.current || !cameraRef.current || !sceneRef.current || !annotationsGroupRef.current) return;
     
-    // Only process if it's a primary click and we are not dragging (OrbitControls handles dragging)
-    // We can use a simple check: if mouse moved significantly between down and up, it's a drag.
-    // But onClick only fires after mouseup.
-    
-    // Raycasting
+    // Raycasting setup
     const rect = mountRef.current?.getBoundingClientRect();
     if (!rect) return;
 
@@ -154,16 +174,54 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
 
     mouseRef.current.set(x, y);
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // 1. Check for annotation clicks first
+    const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
+    if (annotationIntersects.length > 0) {
+        // Find the first object with userData.type === 'annotation'
+        const hit = annotationIntersects.find(i => i.object.userData?.type === 'annotation');
+        if (hit) {
+            const annId = hit.object.userData.id;
+            
+            if (isDeleteMode) {
+                setAnnotationsToDelete(prev => {
+                    if (prev.includes(annId)) {
+                        return prev.filter(id => id !== annId);
+                    } else {
+                        return [...prev, annId];
+                    }
+                });
+                return;
+            }
 
+            setSelectedAnnotationId(annId);
+            onAnnotationSelect?.(annId);
+            return; // Stop processing to avoid creating new points under existing ones
+        }
+    }
+
+    // If we didn't hit an annotation, and we are NOT editing, deselect
+    if (!isEditing && !isDeleteMode) {
+        if (selectedAnnotationId) {
+            setSelectedAnnotationId(null);
+            onAnnotationSelect?.(null);
+        }
+        return;
+    }
+
+    // 2. If editing, check for model clicks
     const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
 
-    if (intersects.length > 0) {
+    if (intersects.length > 0 && !isDeleteMode) {
         const point = intersects[0].point;
         const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
 
         if (!startPoint) {
             setStartPoint(clickedPoint);
             setCurrentPoint(clickedPoint); // Init preview
+            // Also deselect any annotation when starting to draw
+            setSelectedAnnotationId(null);
+            onAnnotationSelect?.(null);
         } else {
             // Finish line
             const newAnnotation: Partial<ThreeDAnnotation> = {
@@ -215,6 +273,49 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
       setShowInsightModal(false);
       setTempAnnotation(null);
   };
+
+  const handleDeleteSelected = () => {
+      if (selectedAnnotationId && onAnnotationDelete) {
+          onAnnotationDelete(selectedAnnotationId);
+          setSelectedAnnotationId(null);
+          onAnnotationSelect?.(null);
+      }
+  };
+
+  const handleToggleDeleteMode = () => {
+      if (isDeleteMode) {
+          // Confirm deletion if items are selected
+          if (annotationsToDelete.length > 0 && onAnnotationDelete) {
+              annotationsToDelete.forEach(id => onAnnotationDelete(id));
+          }
+          // Exit mode
+          setIsDeleteMode(false);
+          setAnnotationsToDelete([]);
+      } else {
+          // Enter mode
+          setIsDeleteMode(true);
+          setIsEditing(false); // Ensure not editing
+          setSelectedAnnotationId(null); // Clear single selection
+          onAnnotationSelect?.(null);
+      }
+  };
+
+  // Handle Delete/Backspace key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.key === 'Delete' || e.key === 'Backspace')) {
+            if (isDeleteMode && annotationsToDelete.length > 0) {
+                 annotationsToDelete.forEach(id => onAnnotationDelete?.(id));
+                 setAnnotationsToDelete([]);
+            } else if (selectedAnnotationId) {
+                handleDeleteSelected();
+            }
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete]);
+
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -386,25 +487,37 @@ const Viewer: React.FC<ViewerProps> = ({ modelUrl, onModelUpload, annotations = 
         aria-label="Upload GLB model"
       />
 
+
       {modelLoaded && !isLoading && (
         <>
-            <div className="absolute top-4 left-4 flex flex-col gap-2">
-                <button
-                onClick={handleUploadClick}
-                className="px-4 py-2 bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto"
-                aria-label="Change 3D model"
-                >
-                Change Model
-                </button>
-            </div>
             
-             {/* Edit Mode Toggle */}
+             {/* Edit Mode Toggle & Delete Button */}
             <div className="absolute top-4 right-4 flex gap-2">
                  <button
+                     onClick={handleToggleDeleteMode}
+                     className={`px-4 py-2 backdrop-blur-sm border text-white text-sm font-semibold rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 transition-colors pointer-events-auto flex items-center gap-2 ${
+                         isDeleteMode 
+                             ? 'bg-red-900/60 border-red-700/50 hover:bg-red-800 focus:ring-red-500 ring-2 ring-red-500' 
+                             : 'bg-gray-800/80 border-gray-700/50 hover:bg-gray-700 focus:ring-cyan-500'
+                     }`}
+                     aria-label={isDeleteMode ? "Confirm Deletion" : "Enter Delete Mode"}
+                 >
+                     <TrashIcon className="h-4 w-4" />
+                     {isDeleteMode ? (annotationsToDelete.length > 0 ? `Delete (${annotationsToDelete.length})` : 'Done') : 'Delete'}
+                 </button>
+
+                 <button
                     onClick={() => {
+                        if (isDeleteMode) {
+                            setIsDeleteMode(false);
+                            setAnnotationsToDelete([]);
+                        }
                         setIsEditing(!isEditing);
                         setStartPoint(null);
                         setCurrentPoint(null);
+                        // Deselect when toggling edit mode
+                        setSelectedAnnotationId(null);
+                        onAnnotationSelect?.(null);
                     }}
                     className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto flex items-center gap-2 ${
                         isEditing ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
