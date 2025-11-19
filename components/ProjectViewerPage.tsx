@@ -822,6 +822,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         ));
     };
 
+    const handleAddInsights = (newInsights: Insight[]) => {
+        setScans(prev => prev.map(scan => 
+            scan.date === currentScanDate ? { ...scan, insights: [...scan.insights, ...newInsights] } : scan
+        ));
+    };
+
     const handleInsightStatusChange = (insightId: string, newStatus: InsightStatus) => {
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
@@ -1989,6 +1995,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     insights={currentScan?.insights || []} 
                                     progress={project.progress} 
                                     onViewReport={handleViewReport}
+                                    onAddInsights={handleAddInsights}
                                     isListDataActive={isListDataActive}
                                     onToggleListData={handleToggleListData}
                                     centerViewerFiles={currentScanViewerState.centerViewerFiles}

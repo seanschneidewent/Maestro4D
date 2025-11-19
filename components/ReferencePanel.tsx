@@ -3,6 +3,7 @@ import { ProjectSummary, Severity, Insight, InsightStatus, InsightType } from '.
 import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon } from './Icons';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { analyzeDeviationReport } from '../utils/gemini';
 
 type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
 
@@ -11,6 +12,7 @@ interface ReferencePanelProps {
   insights: Insight[];
   progress: number;
   onViewReport?: (type: ReportType, files: File | File[], onDeleteFile?: (index: number) => void, onAddFile?: (files: File[]) => void) => void;
+  onAddInsights?: (insights: Insight[]) => void;
   isListDataActive?: boolean;
   onToggleListData?: () => void;
   centerViewerFiles?: Array<{ name: string; url: string; file: File }>;
@@ -26,6 +28,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   insights, 
   progress, 
   onViewReport,
+  onAddInsights,
   isListDataActive = false,
   onToggleListData,
   centerViewerFiles = [],
@@ -48,6 +51,8 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
     allData: [],
   });
 
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
   // Refs for file inputs
   const progressFileInputRef = useRef<HTMLInputElement>(null);
   const deviationFileInputRef = useRef<HTMLInputElement>(null);
@@ -63,10 +68,23 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
     e.target.value = '';
   };
 
-  const handleDeviationUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDeviationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type === 'application/pdf') {
       setReportFiles(prev => ({ ...prev, deviation: file }));
+      
+      if (onAddInsights) {
+        setIsAnalyzing(true);
+        try {
+          const newInsights = await analyzeDeviationReport(file);
+          onAddInsights(newInsights);
+        } catch (error) {
+          console.error("Failed to analyze report:", error);
+          alert("Failed to analyze the deviation report. Please ensure your Gemini API key is set correctly.");
+        } finally {
+          setIsAnalyzing(false);
+        }
+      }
     }
     e.target.value = '';
   };
@@ -533,7 +551,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                       onViewReport('deviation', reportFiles.deviation);
                     }
                   }}
-                  disabled={!reportFiles.deviation}
+                  disabled={!reportFiles.deviation || isAnalyzing}
                   className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition-all duration-300 ${
                     reportFiles.deviation
                       ? 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/20 hover:shadow-cyan-900/40 hover:-translate-y-0.5'
@@ -541,8 +559,17 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                   }`}
                   aria-label="View Deviation Report"
                 >
-                  <DocumentIcon className="h-4 w-4" />
-                  <span>View Report</span>
+                  {isAnalyzing ? (
+                    <>
+                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Analyzing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <DocumentIcon className="h-4 w-4" />
+                      <span>View Report</span>
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={handleDeviationButtonClick}
