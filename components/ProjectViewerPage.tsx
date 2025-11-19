@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation } from '../types';
+import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation, SerializableFile } from '../types';
 import { MaestroLogo, ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
@@ -10,6 +10,33 @@ import InsightChatPanel from './InsightChatPanel';
 import TimelineScrubber from './TimelineScrubber';
 import AddScanModal from './AddScanModal';
 import GeminiPanel, { AgentsLogo } from './GeminiPanel';
+
+// --- FILE HELPERS ---
+const fileToSerializable = (file: File): Promise<SerializableFile> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            content: reader.result as string,
+        });
+        reader.onerror = error => reject(error);
+    });
+};
+
+const serializableToFile = (sFile: SerializableFile): File => {
+    const arr = sFile.content.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || sFile.type;
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while(n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], sFile.name, { type: mime });
+};
 
 // --- CSV PARSING UTILITY ---
 const parseCsv = (text: string): Record<string, string>[] => {
@@ -528,7 +555,24 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Initialize empty viewer state for all scans
         const initialViewerState: Record<string, ScanViewerState> = {};
         initialScans.forEach(scan => {
-            initialViewerState[scan.date] = EMPTY_SCAN_VIEWER_STATE;
+            // Hydrate centerViewerFiles from persisted scan data
+            const hydratedFiles = (scan.centerViewerFiles || []).map(sFile => {
+                const file = serializableToFile(sFile);
+                const url = URL.createObjectURL(file);
+                // Track URL for cleanup
+                if (!centerViewerUrlsRef.current[scan.date]) {
+                    centerViewerUrlsRef.current[scan.date] = [];
+                }
+                centerViewerUrlsRef.current[scan.date].push(url);
+                return { name: file.name, url, file };
+            });
+
+            initialViewerState[scan.date] = {
+                ...EMPTY_SCAN_VIEWER_STATE,
+                centerViewerFiles: hydratedFiles,
+                // If we have files, try to select the first one
+                selectedFileIndex: 0,
+            };
         });
         setScanViewerState(initialViewerState);
 
@@ -858,7 +902,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     };
 
     // Center viewer file management handlers
-    const handleCenterViewerAddFile = useCallback((files: File[]) => {
+    const handleCenterViewerAddFile = useCallback(async (files: File[]) => {
         if (!files || files.length === 0 || !currentScanDate) return;
         
         try {
@@ -889,10 +933,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     URL.revokeObjectURL(oldUrl);
                 }
                 glbUrlsRef.current[currentScanDate] = glbUrl;
-                
-                setScans(prev => prev.map(scan => 
-                    scan.date === currentScanDate ? { ...scan, modelUrl: glbUrl } : scan
-                ));
+                // We will update scans modelUrl below
             }
             
             updateCurrentScanViewerState(state => {
@@ -905,6 +946,24 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     selectedFileIndex: wasEmpty && updated.length > 0 ? 0 : state.selectedFileIndex
                 };
             });
+
+            // Persist files
+            try {
+                const serializableFiles = await Promise.all(files.map(fileToSerializable));
+                setScans(prev => prev.map(scan => {
+                    if (scan.date === currentScanDate) {
+                        return {
+                            ...scan,
+                            modelUrl: glbUrl || scan.modelUrl,
+                            centerViewerFiles: [...(scan.centerViewerFiles || []), ...serializableFiles]
+                        };
+                    }
+                    return scan;
+                }));
+            } catch (err) {
+                console.error('Failed to serialize files for persistence:', err);
+            }
+
         } catch (error) {
             console.error('Error adding files:', error);
             // Don't crash the app, just log the error
@@ -917,13 +976,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Check if the file being deleted is the current model
         const currentState = scanViewerState[currentScanDate];
         if (currentState && currentState.centerViewerFiles[index]) {
-            const fileToDelete = currentState.centerViewerFiles[index];
-            setScans(prev => prev.map(scan => {
-                if (scan.date === currentScanDate && scan.modelUrl === fileToDelete.url) {
-                    return { ...scan, modelUrl: undefined };
-                }
-                return scan;
-            }));
+            // Logic moved to setScans below for atomic update
         }
         
         updateCurrentScanViewerState(state => {
@@ -975,6 +1028,27 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 pdfAnnotationGroups: newPdfAnnotationGroups
             };
         });
+
+        // Update persistence state
+        setScans(prev => prev.map(scan => {
+            if (scan.date === currentScanDate) {
+                const currentFiles = scan.centerViewerFiles || [];
+                const newFiles = currentFiles.filter((_, i) => i !== index);
+                
+                // Also handle modelUrl update if we deleted the model
+                let newModelUrl = scan.modelUrl;
+                if (currentState && currentState.centerViewerFiles[index] && scan.modelUrl === currentState.centerViewerFiles[index].url) {
+                    newModelUrl = undefined;
+                }
+
+                return {
+                    ...scan,
+                    modelUrl: newModelUrl,
+                    centerViewerFiles: newFiles
+                };
+            }
+            return scan;
+        }));
     }, [currentScanDate, updateCurrentScanViewerState, scanViewerState]);
 
     const handleCenterViewerFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1183,6 +1257,14 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             }
             centerViewerUrlsRef.current[currentScanDate].push(pdfUrl);
             
+            // Serialize for persistence
+            let serializableBriefFile: SerializableFile | undefined;
+            try {
+                serializableBriefFile = await fileToSerializable(pdfFile);
+            } catch (e) {
+                console.error("Failed to serialize brief file for persistence", e);
+            }
+
             // Update state with brief file
             updateCurrentScanViewerState(currentState => {
                 // Check if brief file already exists
@@ -1211,10 +1293,37 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     };
                 }
             });
+
+            // Update persistence
+            if (serializableBriefFile) {
+                setScans(prev => prev.map(scan => {
+                    if (scan.date === currentScanDate) {
+                        const currentState = scanViewerState[currentScanDate];
+                        const currentFiles = scan.centerViewerFiles || [];
+                        let newFiles = [...currentFiles];
+                        
+                        // Try to match brief file logic with state
+                        if (currentState && currentState.briefFileIndex !== null && currentState.briefFileIndex < newFiles.length) {
+                             // Replace existing
+                             newFiles[currentState.briefFileIndex] = serializableBriefFile;
+                        } else {
+                            // Append
+                            newFiles.push(serializableBriefFile);
+                        }
+                        
+                        return {
+                            ...scan,
+                            centerViewerFiles: newFiles
+                        };
+                    }
+                    return scan;
+                }));
+            }
+
         } catch (error) {
             console.error('Error generating brief PDF:', error);
         }
-    }, [currentScanDate, updateCurrentScanViewerState]);
+    }, [currentScanDate, updateCurrentScanViewerState, scanViewerState]);
 
     // Ensure selectedFileIndex stays within bounds when files change
     useEffect(() => {

@@ -52,6 +52,7 @@ export interface ScanData {
   pdfAnnotations?: Record<number, PdfAnnotation[]>;
   pdfAnnotationGroups?: AnnotationGroup[]; // Linked annotation groups with snapshots
   threeDAnnotations?: ThreeDAnnotation[];
+  centerViewerFiles?: SerializableFile[];
   insights: Insight[];
 }
 
