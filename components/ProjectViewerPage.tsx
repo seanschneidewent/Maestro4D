@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation, SerializableFile } from '../types';
-import { MaestroLogo, ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
+import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
 import PdfToolsPanel from './PdfToolsPanel';
@@ -11,31 +11,59 @@ import TimelineScrubber from './TimelineScrubber';
 import AddScanModal from './AddScanModal';
 import GeminiPanel, { AgentsLogo } from './GeminiPanel';
 
+import { saveFileToDB, getFileFromDB, deleteFileFromDB } from '../utils/db';
+
 // --- FILE HELPERS ---
-const fileToSerializable = (file: File): Promise<SerializableFile> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve({
+const fileToSerializable = async (file: File): Promise<SerializableFile> => {
+    try {
+        const id = await saveFileToDB(file, file.name, file.type);
+        return {
             name: file.name,
             type: file.type,
             size: file.size,
-            content: reader.result as string,
+            storageId: id
+        };
+    } catch (error) {
+        console.error("Failed to save file to DB, falling back to base64", error);
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve({
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                content: reader.result as string,
+            });
+            reader.onerror = error => reject(error);
         });
-        reader.onerror = error => reject(error);
-    });
+    }
 };
 
-const serializableToFile = (sFile: SerializableFile): File => {
-    const arr = sFile.content.split(',');
-    const mime = arr[0].match(/:(.*?);/)?.[1] || sFile.type;
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while(n--) {
-        u8arr[n] = bstr.charCodeAt(n);
+const serializableToFile = async (sFile: SerializableFile): Promise<File> => {
+    if (sFile.storageId) {
+        try {
+            const stored = await getFileFromDB(sFile.storageId);
+            if (stored) {
+                return new File([stored.blob], stored.name, { type: stored.type });
+            }
+        } catch (e) {
+            console.error("Error fetching file from DB", e);
+        }
     }
-    return new File([u8arr], sFile.name, { type: mime });
+
+    if (sFile.content) {
+        const arr = sFile.content.split(',');
+        const mime = arr[0].match(/:(.*?);/)?.[1] || sFile.type;
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while(n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new File([u8arr], sFile.name, { type: mime });
+    }
+    
+    return new File(["File not found"], sFile.name, { type: "text/plain" });
 };
 
 // --- CSV PARSING UTILITY ---
@@ -555,26 +583,45 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Initialize empty viewer state for all scans
         const initialViewerState: Record<string, ScanViewerState> = {};
         initialScans.forEach(scan => {
-            // Hydrate centerViewerFiles from persisted scan data
-            const hydratedFiles = (scan.centerViewerFiles || []).map(sFile => {
-                const file = serializableToFile(sFile);
-                const url = URL.createObjectURL(file);
-                // Track URL for cleanup
-                if (!centerViewerUrlsRef.current[scan.date]) {
-                    centerViewerUrlsRef.current[scan.date] = [];
-                }
-                centerViewerUrlsRef.current[scan.date].push(url);
-                return { name: file.name, url, file };
-            });
-
             initialViewerState[scan.date] = {
                 ...EMPTY_SCAN_VIEWER_STATE,
-                centerViewerFiles: hydratedFiles,
-                // If we have files, try to select the first one
+                centerViewerFiles: [], // Will load async
                 selectedFileIndex: 0,
             };
         });
         setScanViewerState(initialViewerState);
+
+        // Async load files
+        const loadFiles = async () => {
+            for (const scan of initialScans) {
+                if (!scan.centerViewerFiles || scan.centerViewerFiles.length === 0) continue;
+                
+                try {
+                    const hydratedFiles = await Promise.all(scan.centerViewerFiles.map(async sFile => {
+                        const file = await serializableToFile(sFile);
+                        const url = URL.createObjectURL(file);
+                        // Track URL for cleanup
+                        if (!centerViewerUrlsRef.current[scan.date]) {
+                            centerViewerUrlsRef.current[scan.date] = [];
+                        }
+                        centerViewerUrlsRef.current[scan.date].push(url);
+                        return { name: file.name, url, file };
+                    }));
+
+                    setScanViewerState(prev => ({
+                        ...prev,
+                        [scan.date]: {
+                            ...prev[scan.date],
+                            centerViewerFiles: hydratedFiles,
+                            selectedFileIndex: 0,
+                        }
+                    }));
+                } catch (error) {
+                    console.error(`Error loading files for scan ${scan.date}:`, error);
+                }
+            }
+        };
+        loadFiles();
 
         // Set current date to the latest scan date present in the project data
         const latestScanDate = initialScans.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.date || project.lastScan.date;
@@ -648,6 +695,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 URL.revokeObjectURL(glbUrl);
                 delete glbUrlsRef.current[date];
             }
+        });
+
+        // Delete files from DB for deleted scans
+        scans.filter(scan => selectedScanDates.includes(scan.date)).forEach(scan => {
+            scan.centerViewerFiles?.forEach(sFile => {
+                if (sFile.storageId) {
+                    deleteFileFromDB(sFile.storageId).catch(err => console.error("Error deleting file from DB:", err));
+                }
+            });
         });
         
         // Remove selected scans
@@ -1033,6 +1089,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
                 const currentFiles = scan.centerViewerFiles || [];
+                
+                // Delete from DB
+                const sFileToDelete = currentFiles[index];
+                if (sFileToDelete && sFileToDelete.storageId) {
+                    deleteFileFromDB(sFileToDelete.storageId).catch(err => console.error("Error deleting file from DB:", err));
+                }
+
                 const newFiles = currentFiles.filter((_, i) => i !== index);
                 
                 // Also handle modelUrl update if we deleted the model
@@ -1710,18 +1773,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
             <header className="flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 gap-4 min-h-[88px]">
-                <div className="flex items-center gap-4 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0">
                     <div 
                         onClick={onBack}
-                        className="flex items-center gap-3 cursor-pointer group"
+                        className="cursor-pointer group"
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onBack(); }}
                     >
                         <ArrowLeftIcon className="h-5 w-5 text-gray-400 group-hover:text-cyan-400 transition-colors" />
-                        <MaestroLogo />
                     </div>
-                    <div className="w-px h-6 bg-gray-700"></div>
                      {isEditingName ? (
                         <input
                             ref={nameInputRef}

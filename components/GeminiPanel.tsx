@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { CloseIcon, SendIcon, ArrowUpIcon, ArrowDownIcon, DocumentIcon, MarketIntelIcon, SpecSearchIcon } from './Icons';
 import { AgentType, AgentState, Message, SerializableFile } from '../types';
+import { saveFileToDB, deleteFileFromDB } from '../utils/db';
 
 // --- TYPES ---
 interface Material {
@@ -634,18 +635,29 @@ const GeminiPanel: React.FC<GeminiPanelProps> = ({ agentStates, onAgentStatesCha
         }, 100); // Small timeout to let state update
     };
     
-    const fileToSerializable = (file: File): Promise<SerializableFile> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve({
+    const fileToSerializable = async (file: File): Promise<SerializableFile> => {
+        try {
+            const id = await saveFileToDB(file, file.name, file.type);
+            return {
                 name: file.name,
                 type: file.type,
                 size: file.size,
-                content: reader.result as string,
+                storageId: id
+            };
+        } catch (error) {
+            console.error("Failed to save file to DB, falling back to base64", error);
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    content: reader.result as string,
+                });
+                reader.onerror = error => reject(error);
             });
-            reader.onerror = error => reject(error);
-        });
+        }
     };
 
     const handleFilesAdded = async (newFiles: File[]) => {
@@ -672,6 +684,12 @@ const GeminiPanel: React.FC<GeminiPanelProps> = ({ agentStates, onAgentStatesCha
 
     const handleFileRemoved = (indexToRemove: number) => {
         if (!selectedAgent) return;
+        
+        const fileToDelete = agentStates[selectedAgent].uploadedFiles[indexToRemove];
+        if (fileToDelete?.storageId) {
+             deleteFileFromDB(fileToDelete.storageId).catch(console.error);
+        }
+
         onAgentStatesChange(prev => ({
             ...prev,
             [selectedAgent]: {

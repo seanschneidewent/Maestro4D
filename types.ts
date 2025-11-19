@@ -67,7 +67,8 @@ export interface SerializableFile {
   name: string;
   type: string;
   size: number;
-  content: string; // base64 data URL
+  content?: string; // base64 data URL (legacy)
+  storageId?: string; // IndexedDB ID
 }
 
 export interface AgentState {

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Insight, InsightType, Severity, InsightStatus, Note, Message } from '../types';
-import { InsightTypeIcon, SeverityIcon, BarsArrowUpIcon, BarsArrowDownIcon, CheckIcon, FunnelIcon, ArrowDownTrayIcon, Squares2X2Icon, SparklesIcon, MarketIntelIcon, SpecSearchIcon, ChevronDownIcon, ArrowLeftIcon, ChatBubbleIcon } from './Icons';
+import { InsightTypeIcon, SeverityIcon, BarsArrowUpIcon, BarsArrowDownIcon, CheckIcon, FunnelIcon, ArrowDownTrayIcon, Squares2X2Icon, SparklesIcon, MarketIntelIcon, SpecSearchIcon, ChevronDownIcon, ArrowLeftIcon, ChatBubbleIcon, MaestroLogo } from './Icons';
 
 interface InsightsListProps {
   insights: Insight[];
@@ -423,21 +423,22 @@ interface InsightCardProps {
 
 const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSelectMode, isBulkSelected, onBulkSelectToggle, isHighlighted, domRef }) => {
     const severityColorClasses = {
-        [Severity.Critical]: { select: 'bg-[#f56565]', gradient: 'from-red-600 via-red-500 to-red-400' },
-        [Severity.High]: { select: 'bg-[#ed8936]', gradient: 'from-orange-600 via-orange-500 to-orange-400' },
-        [Severity.Medium]: { select: 'bg-yellow-400', gradient: 'from-yellow-600 via-yellow-500 to-yellow-400' },
-        [Severity.Low]: { select: 'bg-green-500', gradient: 'from-green-600 via-green-500 to-green-400' },
+        [Severity.Critical]: { select: 'bg-[#f56565]', gradient: 'from-red-600 via-red-500 to-red-400', accent: '#ef4444' },
+        [Severity.High]: { select: 'bg-[#ed8936]', gradient: 'from-orange-600 via-orange-500 to-orange-400', accent: '#f97316' },
+        [Severity.Medium]: { select: 'bg-yellow-400', gradient: 'from-yellow-600 via-yellow-500 to-yellow-400', accent: '#eab308' },
+        [Severity.Low]: { select: 'bg-green-500', gradient: 'from-green-600 via-green-500 to-green-400', accent: '#22c55e' },
     };
     
     const severityClasses = severityColorClasses[insight.severity] || { select: 'bg-cyan-500', gradient: 'from-cyan-600 via-cyan-500 to-cyan-400' };
   
-    const wrapperClasses = `flex-1 rounded-lg p-px transition-all duration-200 group/card ${
-        isBulkSelected 
-            ? severityClasses.select 
-            : isHighlighted
-                ? 'bg-gradient-to-r from-yellow-400 to-orange-500 shadow-lg shadow-orange-500/20 scale-[1.02] z-10'
-                : 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:p-[2px]'
-    }`;
+    const baseWrapperClasses = 'flex-1 group/card relative rounded-xl border border-white/10 bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-5 transition-all duration-300 overflow-hidden hover:border-cyan-500/30 hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]';
+    const highlightStateClasses = isHighlighted ? 'shadow-lg shadow-yellow-500/30 scale-[1.01] z-10' : '';
+    const selectionStateClasses = isBulkSelected ? 'scale-[1.01]' : '';
+    const wrapperClassName = `${baseWrapperClasses} ${highlightStateClasses} ${selectionStateClasses}`;
+    const selectionStyle = isBulkSelected ? {
+        boxShadow: `0 0 0 2px ${severityClasses.accent}80`,
+        borderColor: `${severityClasses.accent}80`
+    } : undefined;
 
     const handleCardClick = () => {
         if (isBulkSelectMode) {
@@ -463,10 +464,11 @@ const InsightCard: React.FC<InsightCardProps> = ({ insight, onOpenChat, isBulkSe
                 </div>
             )}
             <div
-                className={wrapperClasses}
+                className={wrapperClassName}
                 onClick={handleCardClick}
+                style={selectionStyle}
             >
-                <div className="bg-gray-800 rounded-[7px] p-4 h-full w-full relative">
+                <div className="h-full w-full relative">
                     <div className="flex justify-between items-start">
                         <div className="flex items-center space-x-3 pr-20">
                             <InsightTypeIcon type={insight.type} />
@@ -741,7 +743,9 @@ const InsightsList: React.FC<InsightsListProps> = ({ insights, onUploadInsights,
   return (
     <div className="w-full bg-gradient-to-b from-gray-900 via-gray-900 to-black backdrop-blur-xl flex flex-col h-full overflow-hidden relative border-l border-white/5">
       <div className={`w-full h-full flex flex-col transition-all duration-300 p-5 ${activeChatInsightId ? 'opacity-0 -translate-x-4 pointer-events-none' : 'opacity-100 translate-x-0'}`}>
-          <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight mb-6 flex-shrink-0">M4D Insights</h2>
+          <div className="mb-6 flex-shrink-0">
+            <MaestroLogo />
+          </div>
           <div className="mb-6 flex-shrink-0">
             <div className="flex items-center gap-1 rounded-md bg-gray-700/50 border border-gray-600/80 px-1 py-1">
               <button onClick={handleUploadClick} className="px-3 py-1.5 text-xs font-semibold text-gray-300 hover:bg-gray-600/70 rounded-md transition-colors" aria-label="Upload insights data">Upload</button>
