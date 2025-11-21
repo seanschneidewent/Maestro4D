@@ -1,20 +1,31 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Maestro 4D Monorepo
 
-# Run and deploy your AI Studio app
+Construction project management platform with React web app, FastAPI backend, and native iPad app.
 
-This contains everything you need to run your app locally.
+## Structure
 
-View your app in AI Studio: https://ai.studio/apps/drive/1a8ZCx9r5hVN83U3y3rhw75DxQ5QcqFl4
+- `apps/web-internal/` - React/Vite internal dashboard (Maestro 4D)
+- `apps/ios-customer/` - SwiftUI iPad app for customers
+- `packages/api/` - FastAPI backend
+- `packages/shared-types/` - Shared TypeScript types
 
-## Run Locally
+## Getting Started
 
-**Prerequisites:**  Node.js
+### Install Dependencies
+\`\`\`bash
+pnpm install
+cd packages/api && pip install -r requirements.txt
+\`\`\`
 
+### Run Development
+\`\`\`bash
+# Terminal 1: React app
+pnpm dev:web
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# Terminal 2: API
+pnpm dev:api
+
+# Terminal 3: iOS app
+open apps/ios-customer/MaestroCustomer.xcodeproj
+# Press ▶️ in Xcode
+\`\`\`
