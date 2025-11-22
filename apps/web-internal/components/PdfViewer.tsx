@@ -32,6 +32,9 @@ export interface PdfToolbarHandlers {
   onUploadClick: () => void;
   isToolbarExpanded: boolean;
   onToolbarExpandedChange: (expanded: boolean) => void;
+  fontSize: number;
+  onFontSizeChange: (size: number) => void;
+  effectiveFontSize: number;
 }
 
 interface PdfViewerProps {
@@ -45,6 +48,7 @@ interface PdfViewerProps {
   onToolsOpenChange?: (open: boolean) => void;
   onToolbarHandlersReady?: (handlers: PdfToolbarHandlers) => void;
   renderToolbarExternally?: boolean;
+  toolbarRef?: React.RefObject<HTMLDivElement>;
 }
 
 export type Tool = 'pen' | 'text' | 'arrow' | 'rectangle';
@@ -88,7 +92,7 @@ interface TextAnnotationEditorProps {
   editorRefs: React.MutableRefObject<Record<string, HTMLDivElement>>;
   onInput: (e: React.FormEvent<HTMLDivElement>) => void;
   onFocus: () => void;
-  onBlur: () => void;
+  onBlur: (e: React.FocusEvent<HTMLDivElement>) => void;
   getAnnotationHtml: (annotation: Extract<PdfAnnotation, { kind: 'text' }> | Extract<PdfAnnotation, { kind: 'arrow' }>) => string;
 }
 
@@ -159,15 +163,18 @@ const TextAnnotationEditor: React.FC<TextAnnotationEditorProps> = ({
   );
 };
 
-const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, annotationGroups: externalAnnotationGroups, onAnnotationGroupsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, annotationGroups: externalAnnotationGroups, onAnnotationGroupsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isPanningRef = useRef(false);
+  const lastPanPointRef = useRef<{ x: number; y: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [pdfLoaded, setPdfLoaded] = useState(!!pdfUrl);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
   const [containerWidth, setContainerWidth] = useState<number>(800);
   const [scale, setScale] = useState<number>(1);
-  
+
   // Annotation state
   const [tool, setTool] = useState<Tool>('pen');
   const [strokeColor, setStrokeColor] = useState<string>('#3b82f6'); // blue-500
@@ -184,7 +191,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [internalIsToolsOpen, setInternalIsToolsOpen] = useState<boolean>(false);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState<boolean>(true);
-  
+  const [fontSize, setFontSize] = useState<number>(14);
+
   // Use controlled state if provided, otherwise use internal state
   const isToolsOpen = controlledIsToolsOpen !== undefined ? controlledIsToolsOpen : internalIsToolsOpen;
   const setIsToolsOpen = (open: boolean) => {
@@ -194,17 +202,17 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       setInternalIsToolsOpen(open);
     }
   };
-  
+
   // Annotation is only enabled when tools panel is expanded
   const isAnnotationEnabled = isToolsOpen;
-  
+
   // Reset toolbar expanded state when tools panel opens
   useEffect(() => {
     if (isToolsOpen) {
       setIsToolbarExpanded(true);
     }
   }, [isToolsOpen]);
-  
+
   // Clear editing state when tools close
   useEffect(() => {
     if (!isToolsOpen && editingTextId) {
@@ -241,7 +249,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
     setTool(newTool);
   }, []);
-  
+
   // Refs for canvas overlays
   const canvasRefs = useRef<Record<number, HTMLCanvasElement>>({});
   const pageContainerRefs = useRef<Record<number, HTMLDivElement>>({});
@@ -276,11 +284,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     const resizeObserver = new ResizeObserver(() => {
       scheduleSnapWidthUpdate();
     });
-    
+
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
     }
-    
+
     window.addEventListener('resize', scheduleSnapWidthUpdate);
     return () => {
       resizeObserver.disconnect();
@@ -331,7 +339,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       setError(null);
       setScale(1);
       setCurrentPage(1);
-      
+
       // Capture base width when PDF URL changes
       if (pdfUrl && containerRef.current) {
         const width = containerRef.current.clientWidth - 32;
@@ -449,16 +457,16 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         const h = annotation.hNorm * canvas.height;
 
         ctx.beginPath();
-        
+
         // Create radial gradient for stroke
         const centerX = x + w / 2;
         const centerY = y + h / 2;
         const radius = Math.sqrt(w * w + h * h) / 2;
-        
+
         const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
         gradient.addColorStop(0, '#3b82f6'); // Blue
         gradient.addColorStop(1, '#06b6d4'); // Cyan
-        
+
         ctx.strokeStyle = gradient;
         ctx.lineWidth = annotation.width;
         ctx.globalCompositeOperation = 'source-over';
@@ -482,20 +490,20 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
             height: wrapper.clientHeight,
           };
         }
-        
+
         const baseDims = basePageDimensionsRef.current[pageNumber];
-        
+
         // Set canvas to base dimensions (will be scaled via CSS transform)
         canvas.width = baseDims.width;
         canvas.height = baseDims.height;
-        
+
         // Position canvas to fill wrapper (already positioned via CSS)
         canvas.style.position = 'absolute';
         canvas.style.left = '0px';
         canvas.style.top = '0px';
         canvas.style.width = '100%';
         canvas.style.height = '100%';
-        
+
         redrawPage(pageNumber);
       });
     }
@@ -610,11 +618,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     // Calculate center of the box
     const centerX = boxX + boxW / 2;
     const centerY = boxY + boxH / 2;
-    
+
     // Calculate direction vector from box center to target point
     const dx = targetX - centerX;
     const dy = targetY - centerY;
-    
+
     // Calculate border midpoints
     const borders = [
       { x: centerX, y: boxY, name: 'top' },           // Top border center
@@ -622,17 +630,17 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       { x: boxX, y: centerY, name: 'left' },          // Left border center
       { x: boxX + boxW, y: centerY, name: 'right' }   // Right border center
     ];
-    
+
     // Find which border the arrow direction points toward most directly
     // We'll use the angle to determine which edge is most appropriate
     const angle = Math.atan2(dy, dx);
-    
+
     // Determine which border based on angle
     // Right: -45° to 45° (-π/4 to π/4)
     // Bottom: 45° to 135° (π/4 to 3π/4)
     // Left: 135° to -135° (3π/4 to -3π/4)
     // Top: -135° to -45° (-3π/4 to -π/4)
-    
+
     let anchor;
     if (angle >= -Math.PI / 4 && angle < Math.PI / 4) {
       // Arrow points right
@@ -647,14 +655,27 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       // Arrow points up
       anchor = borders[0]; // top
     }
-    
+
     return { xNorm: anchor.x, yNorm: anchor.y };
   }, []);
 
-  // Start drawing or text draft
+  // Start drawing, text draft, or panning
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>, pageNumber: number) => {
+    // Handle right-click panning (only when zoomed in)
+    if (e.button === 2 && scale > 1) {
+      e.preventDefault();
+      isPanningRef.current = true;
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY };
+      const canvas = canvasRefs.current[pageNumber];
+      if (canvas) {
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = 'grabbing';
+      }
+      return;
+    }
+
     if (!isAnnotationEnabled) return;
-    
+
     e.preventDefault();
     const point = getNormalizedPoint(e, pageNumber);
     if (!point) return;
@@ -699,8 +720,23 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
   };
 
-  // Continue drawing or text draft
+  // Continue drawing, text draft, or panning
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>, pageNumber: number) => {
+    // Handle panning
+    if (isPanningRef.current && lastPanPointRef.current && scrollContainerRef.current) {
+      e.preventDefault();
+      const deltaX = e.clientX - lastPanPointRef.current.x;
+      const deltaY = e.clientY - lastPanPointRef.current.y;
+
+      // console.log('Panning:', { deltaX, deltaY, scrollLeft: scrollContainerRef.current.scrollLeft, scrollTop: scrollContainerRef.current.scrollTop, scrollHeight: scrollContainerRef.current.scrollHeight, clientHeight: scrollContainerRef.current.clientHeight });
+
+      scrollContainerRef.current.scrollLeft -= deltaX;
+      scrollContainerRef.current.scrollTop -= deltaY;
+
+      lastPanPointRef.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
     if (!isDrawing || pageNumber !== currentPage) return;
 
     const point = getNormalizedPoint(e, pageNumber);
@@ -752,12 +788,23 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
   };
 
-  // Finish drawing or text draft
+  // Finish drawing, text draft, or panning
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>, pageNumber: number) => {
+    if (isPanningRef.current) {
+      isPanningRef.current = false;
+      lastPanPointRef.current = null;
+      const canvas = canvasRefs.current[pageNumber];
+      if (canvas) {
+        canvas.releasePointerCapture(e.pointerId);
+        canvas.style.cursor = isAnnotationEnabled ? 'crosshair' : 'default';
+      }
+      return;
+    }
+
     if (!isDrawing || pageNumber !== currentPage) return;
 
     setIsDrawing(false);
-    
+
     if (tool === 'pen' && currentStroke.length > 0) {
       const annotation: PdfAnnotation = {
         kind: 'stroke',
@@ -770,7 +817,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         const pageData = prev[pageNumber] || { annotations: [], undoStack: [], redoStack: [] };
         const newAnnotations = [...pageData.annotations, annotation];
         const newUndoStack = [...pageData.undoStack, pageData.annotations];
-        
+
         return {
           ...prev,
           [pageNumber]: {
@@ -800,14 +847,14 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         text: '',
         html: '',
         color: textColor,
-        fontSize: 14,
+        fontSize: fontSize,
       };
 
       setPageAnnotations((prev) => {
         const pageData = prev[pageNumber] || { annotations: [], undoStack: [], redoStack: [] };
         const newAnnotations = [...pageData.annotations, annotation];
         const newUndoStack = [...pageData.undoStack, pageData.annotations];
-        
+
         return {
           ...prev,
           [pageNumber]: {
@@ -817,22 +864,22 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           },
         };
       });
-      
+
       setTextDraft(null);
       setEditingTextId(textId);
     } else if (tool === 'arrow' && arrowDraft) {
       // Create arrow annotation with text box from draft
       const arrowId = `arrow-${Date.now()}-${Math.random()}`;
-      
+
       // Position text box at the tail (release point, back end) of the arrow
       const minSize = 0.08; // Minimum text box size (8% of page)
       const textBoxWidth = minSize;
       const textBoxHeight = minSize * 0.5; // Half the width for aspect ratio
-      
+
       // Center text box on arrow tail (release point)
       const textX = arrowDraft.tailX - textBoxWidth / 2;
       const textY = arrowDraft.tailY - textBoxHeight / 2;
-      
+
       // Calculate the closest border anchor point for the arrow tail
       // Anchor should point toward the head (tip)
       const anchor = getClosestBorderAnchor(
@@ -843,12 +890,12 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         arrowDraft.headX,
         arrowDraft.headY
       );
-      
+
       // Check if there's a pending rectangle link
       const pendingLink = pendingRectangleLinkRef.current;
       const linkedRectangleId = pendingLink?.rectangleId;
       const groupId = pendingLink?.groupId;
-      
+
       const annotation: PdfAnnotation = {
         kind: 'arrow',
         id: arrowId,
@@ -865,16 +912,16 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         text: '',
         html: '',
         textColor: textColor,
-        fontSize: 14,
+        fontSize: fontSize,
         ...(linkedRectangleId && { linkedRectangleId }),
         ...(groupId && { groupId }),
       };
-      
+
       // Clear the pending rectangle link after using it
       if (linkedRectangleId) {
         pendingRectangleLinkRef.current = null;
       }
-      
+
       // Create annotation group if we have a groupId and rectangle
       if (groupId && linkedRectangleId) {
         // Find the rectangle annotation to get its snapshot
@@ -882,7 +929,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         const rectangleAnnotation = pageData?.annotations.find(
           a => a.kind === 'rectangle' && a.id === linkedRectangleId
         );
-        
+
         if (rectangleAnnotation && rectangleAnnotation.kind === 'rectangle' && rectangleAnnotation.snapshotDataUrl) {
           const newGroup: AnnotationGroup = {
             id: groupId,
@@ -894,7 +941,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
             html: '',
             createdAt: new Date().toISOString(),
           };
-          
+
           setAnnotationGroups(prev => [...prev, newGroup]);
         }
       }
@@ -903,7 +950,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         const pageData = prev[pageNumber] || { annotations: [], undoStack: [], redoStack: [] };
         const newAnnotations = [...pageData.annotations, annotation];
         const newUndoStack = [...pageData.undoStack, pageData.annotations];
-        
+
         return {
           ...prev,
           [pageNumber]: {
@@ -913,7 +960,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           },
         };
       });
-      
+
       setArrowDraft(null);
       setEditingTextId(arrowId);
     } else if (tool === 'rectangle' && rectangleDraft) {
@@ -925,7 +972,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
       const rectangleId = `rectangle-${Date.now()}-${Math.random()}`;
       const groupId = `group-${Date.now()}-${Math.random()}`;
-      
+
       // Capture snapshot asynchronously
       capturePageSnapshot(pageNumber, x, y, w, h).then((snapshotDataUrl) => {
         if (snapshotDataUrl) {
@@ -933,13 +980,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           setPageAnnotations((prev) => {
             const pageData = prev[pageNumber];
             if (!pageData) return prev;
-            
-            const updatedAnnotations = pageData.annotations.map(a => 
-              a.kind === 'rectangle' && a.id === rectangleId 
+
+            const updatedAnnotations = pageData.annotations.map(a =>
+              a.kind === 'rectangle' && a.id === rectangleId
                 ? { ...a, snapshotDataUrl, groupId }
                 : a
             );
-            
+
             return {
               ...prev,
               [pageNumber]: {
@@ -979,12 +1026,12 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       });
 
       setRectangleDraft(null);
-      
+
       // Store rectangle ID and groupId for linking and switch to arrow tool
       pendingRectangleLinkRef.current = { rectangleId, pageNumber, groupId };
       setTool('arrow');
     }
-    
+
     const canvas = canvasRefs.current[pageNumber];
     if (canvas) {
       canvas.releasePointerCapture(e.pointerId);
@@ -1052,11 +1099,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   // HTML sanitizer - allows only span, br, and color style
   const sanitizeHtml = useCallback((html: string): string => {
     if (!html) return '';
-    
+
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     const allowedTags = ['SPAN', 'BR'];
-    
+
     // Collect all elements first (to avoid modifying while iterating)
     const allElements: Element[] = [];
     const walker = doc.createTreeWalker(
@@ -1064,18 +1111,18 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       NodeFilter.SHOW_ELEMENT,
       null
     );
-    
+
     let node: Node | null;
     while ((node = walker.nextNode())) {
       if (node.nodeType === Node.ELEMENT_NODE) {
         allElements.push(node as Element);
       }
     }
-    
+
     // Process elements
     allElements.forEach((element) => {
       const tagName = element.tagName.toUpperCase();
-      
+
       if (!allowedTags.includes(tagName)) {
         // Replace disallowed elements with their text content
         const textNode = doc.createTextNode(element.textContent || '');
@@ -1099,7 +1146,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         });
       }
     });
-    
+
     return doc.body.innerHTML;
   }, []);
 
@@ -1116,7 +1163,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;')
       .replace(/\n/g, '<br>');
-    
+
     const color = annotation.kind === 'arrow' ? annotation.textColor : annotation.color;
     if (color && color !== '#000000') {
       return `<span style="color: ${color}">${escaped}</span>`;
@@ -1149,13 +1196,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     setPageAnnotations((prev) => {
       const pageData = prev[pageNum];
       if (!pageData) return prev;
-      
+
       const updatedAnnotations = pageData.annotations.map(a => {
         if ((a.kind === 'text' || a.kind === 'arrow') && a.id === textId) {
           // Update annotation group if this is an arrow with groupId
           if (a.kind === 'arrow' && a.groupId) {
-            setAnnotationGroups(prevGroups => 
-              prevGroups.map(g => 
+            setAnnotationGroups(prevGroups =>
+              prevGroups.map(g =>
                 g.arrowId === textId ? { ...g, text, html } : g
               )
             );
@@ -1164,7 +1211,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         }
         return a;
       });
-      
+
       return {
         ...prev,
         [pageNum]: {
@@ -1175,7 +1222,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     });
   }, [sanitizeHtml]);
 
-  const handleTextBlur = useCallback((textId: string, pageNum: number) => {
+  const handleTextBlur = useCallback((textId: string, pageNum: number, e: React.FocusEvent<HTMLDivElement>) => {
     const editor = editorRefs.current[textId];
     if (editor) {
       // Final update on blur
@@ -1185,13 +1232,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       setPageAnnotations((prev) => {
         const pageData = prev[pageNum];
         if (!pageData) return prev;
-        
+
         const updatedAnnotations = pageData.annotations.map(a => {
           if ((a.kind === 'text' || a.kind === 'arrow') && a.id === textId) {
             // Update annotation group if this is an arrow with groupId
             if (a.kind === 'arrow' && a.groupId) {
-              setAnnotationGroups(prevGroups => 
-                prevGroups.map(g => 
+              setAnnotationGroups(prevGroups =>
+                prevGroups.map(g =>
                   g.arrowId === textId ? { ...g, text, html } : g
                 )
               );
@@ -1200,7 +1247,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           }
           return a;
         });
-        
+
         return {
           ...prev,
           [pageNum]: {
@@ -1211,40 +1258,44 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         };
       });
     }
+    // Check if focus moved to the toolbar
+    if (toolbarRef?.current && e.relatedTarget instanceof Node && toolbarRef.current.contains(e.relatedTarget)) {
+      return;
+    }
     setEditingTextId(null);
-  }, [sanitizeHtml]);
+  }, [sanitizeHtml, toolbarRef]);
 
   const handleTextColorClick = useCallback((color: string) => {
     if (editingTextId) {
       const editor = editorRefs.current[editingTextId];
       const selection = window.getSelection();
-      
+
       // Check if there's a valid selection within the editor
       if (editor && selection && selection.rangeCount > 0 && !selection.isCollapsed) {
         const range = selection.getRangeAt(0);
         const isSelectionInEditor = editor.contains(range.commonAncestorContainer);
-        
+
         if (isSelectionInEditor) {
           // Apply color to selection
           try {
             // Use execCommand to apply color
             document.execCommand('styleWithCSS', false, 'true');
             document.execCommand('foreColor', false, color);
-            
+
             // Update annotation with new HTML
             const pageNum = findPageForTextId(editingTextId);
             if (pageNum !== null) {
               const html = sanitizeHtml(editor.innerHTML);
               const text = editor.innerText || editor.textContent || '';
-              
+
               setPageAnnotations((prev) => {
                 const pageData = prev[pageNum];
                 if (!pageData) return prev;
-                
+
                 const updatedAnnotations = pageData.annotations.map((a) =>
                   (a.kind === 'text' || a.kind === 'arrow') && a.id === editingTextId ? { ...a, text, html } : a
                 );
-                
+
                 return {
                   ...prev,
                   [pageNum]: {
@@ -1263,20 +1314,20 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
               range.insertNode(span);
               selection.removeAllRanges();
               selection.addRange(range);
-              
+
               const pageNum = findPageForTextId(editingTextId);
               if (pageNum !== null && editor) {
                 const html = sanitizeHtml(editor.innerHTML);
                 const text = editor.innerText || editor.textContent || '';
-                
+
                 setPageAnnotations((prev) => {
                   const pageData = prev[pageNum];
                   if (!pageData) return prev;
-                  
+
                   const updatedAnnotations = pageData.annotations.map((a) =>
                     (a.kind === 'text' || a.kind === 'arrow') && a.id === editingTextId ? { ...a, text, html } : a
                   );
-                  
+
                   return {
                     ...prev,
                     [pageNum]: {
@@ -1293,7 +1344,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           return;
         }
       }
-      
+
       // No selection or selection outside editor - set default color for entire annotation
       const pageNum = findPageForTextId(editingTextId);
       if (pageNum !== null) {
@@ -1333,19 +1384,19 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   const handleTextResizeStop = useCallback((textId: string, pageNum: number, newWidth: number, newHeight: number, newX: number, newY: number) => {
     const baseDims = basePageDimensionsRef.current[pageNum];
     if (!baseDims) return;
-    
+
     const baseW = baseDims.width;
     const baseH = baseDims.height;
-    
+
     const newWNorm = newWidth / baseW;
     const newHNorm = newHeight / baseH;
     const newXNorm = newX / baseW;
     const newYNorm = newY / baseH;
-    
+
     setPageAnnotations((prev) => {
       const pageData = prev[pageNum];
       if (!pageData) return prev;
-      
+
       const updatedAnnotations = pageData.annotations.map((a) => {
         if ((a.kind === 'text' || a.kind === 'arrow') && a.id === textId) {
           if (a.kind === 'arrow') {
@@ -1364,7 +1415,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         }
         return a;
       });
-      
+
       return {
         ...prev,
         [pageNum]: {
@@ -1383,13 +1434,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     const annotation = pageData?.annotations.find(
       a => (a.kind === 'text' || a.kind === 'arrow') && a.id === textId
     );
-    
+
     setPageAnnotations((prev) => {
       const pageData = prev[pageNum];
       if (!pageData) return prev;
-      
+
       const updatedAnnotations = pageData.annotations.filter((a) => !((a.kind === 'text' || a.kind === 'arrow') && a.id === textId));
-      
+
       return {
         ...prev,
         [pageNum]: {
@@ -1399,22 +1450,22 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         },
       };
     });
-    
+
     // Remove annotation group if this was an arrow with groupId
     if (annotation && annotation.kind === 'arrow' && annotation.groupId) {
       setAnnotationGroups(prev => prev.filter(g => g.arrowId !== textId));
-      
+
       // Also remove the linked rectangle if it exists
       if (annotation.linkedRectangleId) {
         setPageAnnotations((prev) => {
           const pageData = prev[pageNum];
           if (!pageData) return prev;
-          
+
           return {
             ...prev,
             [pageNum]: {
               ...pageData,
-              annotations: pageData.annotations.filter(a => 
+              annotations: pageData.annotations.filter(a =>
                 !(a.kind === 'rectangle' && a.id === annotation.linkedRectangleId)
               ),
             },
@@ -1422,7 +1473,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         });
       }
     }
-    
+
     // Clear editing state if this annotation was being edited
     if (editingTextId === textId) {
       setEditingTextId(null);
@@ -1447,6 +1498,49 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
     return textColor;
   }, [editingTextId, pageAnnotations, textColor]);
+
+  // Get the effective font size (focused annotation's font size or default)
+  const effectiveFontSize = useMemo(() => {
+    if (editingTextId) {
+      // Find the focused text annotation across all pages
+      for (const pageData of Object.values(pageAnnotations)) {
+        const pageDataTyped = pageData as PageAnnotations;
+        const annotation = pageDataTyped.annotations.find(
+          (a) => (a.kind === 'text' || a.kind === 'arrow') && a.id === editingTextId
+        );
+        if (annotation && (annotation.kind === 'text' || annotation.kind === 'arrow')) {
+          return annotation.fontSize || 14;
+        }
+      }
+    }
+    return fontSize;
+  }, [editingTextId, pageAnnotations, fontSize]);
+
+  const handleFontSizeChange = useCallback((newSize: number) => {
+    if (editingTextId) {
+      const pageNum = findPageForTextId(editingTextId);
+      if (pageNum !== null) {
+        setPageAnnotations((prev) => {
+          const pageData = prev[pageNum];
+          if (!pageData) return prev;
+
+          const updatedAnnotations = pageData.annotations.map((a) =>
+            (a.kind === 'text' || a.kind === 'arrow') && a.id === editingTextId ? { ...a, fontSize: newSize } : a
+          );
+
+          return {
+            ...prev,
+            [pageNum]: {
+              ...pageData,
+              annotations: updatedAnnotations,
+            },
+          };
+        });
+      }
+    } else {
+      setFontSize(newSize);
+    }
+  }, [editingTextId, findPageForTextId]);
 
   // Expose toolbar handlers to parent component
   useEffect(() => {
@@ -1474,6 +1568,9 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         onUploadClick: handleUploadClick,
         isToolbarExpanded,
         onToolbarExpandedChange: setIsToolbarExpanded,
+        fontSize,
+        onFontSizeChange: handleFontSizeChange,
+        effectiveFontSize,
       });
     }
   }, [
@@ -1496,7 +1593,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     handleZoomIn,
     handleZoomOut,
     handleZoomReset,
+    handleZoomReset,
     handleUploadClick,
+    fontSize,
+    handleFontSizeChange,
+    effectiveFontSize,
   ]);
 
   // Compute display scale for CSS transform (without changing Page props)
@@ -1556,107 +1657,75 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
             {isToolbarExpanded && (
               <>
-            {/* Tool selection */}
-            <div className="flex gap-1 border-t border-gray-700 pt-2">
-              <button
-                onClick={() => handleToolChange('pen')}
-                className={`p-2 rounded ${tool === 'pen' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
-                aria-label="Pen tool"
-                title="Pen"
-              >
-                <PenIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleToolChange('text')}
-                className={`p-2 rounded ${tool === 'text' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
-                aria-label="Text tool"
-                title="Text"
-              >
-                <TextIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleToolChange('rectangle')}
-                className={`p-2 rounded ${tool === 'rectangle' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
-                aria-label="Rectangle tool"
-                title="Rectangle"
-              >
-                <RectangleIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleToolChange('arrow')}
-                className={`p-2 rounded ${tool === 'arrow' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
-                aria-label="Arrow tool"
-                title="Arrow"
-              >
-                <ArrowToolIcon className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Color picker */}
-            {tool === 'pen' && (
-              <div className="flex gap-1 border-t border-gray-700 pt-2">
-                {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#000000'].map((color) => (
+                {/* Tool selection */}
+                <div className="flex gap-1 border-t border-gray-700 pt-2">
                   <button
-                    key={color}
-                    onClick={() => setStrokeColor(color)}
-                    className={`w-6 h-6 rounded border-2 ${strokeColor === color ? 'border-white' : 'border-gray-600'}`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Select color ${color}`}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Rectangle color picker */}
-            {tool === 'rectangle' && (
-              <div className="flex gap-1 border-t border-gray-700 pt-2">
-                {['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#000000', '#ffffff'].map((color) => (
+                    onClick={() => handleToolChange('pen')}
+                    className={`p-2 rounded ${tool === 'pen' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
+                    aria-label="Pen tool"
+                    title="Pen"
+                  >
+                    <PenIcon className="h-4 w-4" />
+                  </button>
                   <button
-                    key={color}
-                    onClick={() => setRectangleColor(color)}
-                    className={`w-6 h-6 rounded border-2 ${rectangleColor === color ? 'border-white' : 'border-gray-600'}`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Select rectangle color ${color}`}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Text color picker */}
-            {tool === 'text' && (
-              <div className="flex gap-1 border-t border-gray-700 pt-2">
-                {['#000000', '#ffffff', '#ef4444', '#10b981', '#f59e0b', '#3b82f6'].map((color) => (
+                    onClick={() => handleToolChange('text')}
+                    className={`p-2 rounded ${tool === 'text' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
+                    aria-label="Text tool"
+                    title="Text"
+                  >
+                    <TextIcon className="h-4 w-4" />
+                  </button>
                   <button
-                    key={color}
-                    onClick={() => handleTextColorClick(color)}
-                    className={`w-6 h-6 rounded border-2 ${effectiveTextColor === color ? 'border-white' : 'border-gray-600'}`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Select text color ${color}`}
-                  />
-                ))}
-              </div>
-            )}
+                    onClick={() => handleToolChange('rectangle')}
+                    className={`p-2 rounded ${tool === 'rectangle' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
+                    aria-label="Rectangle tool"
+                    title="Rectangle"
+                  >
+                    <RectangleIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => handleToolChange('arrow')}
+                    className={`p-2 rounded ${tool === 'arrow' ? 'bg-cyan-600' : 'bg-gray-700 hover:bg-gray-600'} text-white transition-colors`}
+                    aria-label="Arrow tool"
+                    title="Arrow"
+                  >
+                    <ArrowToolIcon className="h-4 w-4" />
+                  </button>
+                </div>
 
-            {/* Arrow color picker */}
-            {tool === 'arrow' && (
-              <>
-                <div className="border-t border-gray-700 pt-2">
-                  <label className="text-xs text-gray-300 block mb-1">Arrow Color</label>
-                  <div className="flex gap-1">
+                {/* Color picker */}
+                {tool === 'pen' && (
+                  <div className="flex gap-1 border-t border-gray-700 pt-2">
                     {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#000000'].map((color) => (
                       <button
                         key={color}
                         onClick={() => setStrokeColor(color)}
                         className={`w-6 h-6 rounded border-2 ${strokeColor === color ? 'border-white' : 'border-gray-600'}`}
                         style={{ backgroundColor: color }}
-                        aria-label={`Select arrow color ${color}`}
+                        aria-label={`Select color ${color}`}
                       />
                     ))}
                   </div>
-                </div>
-                <div className="border-t border-gray-700 pt-2">
-                  <label className="text-xs text-gray-300 block mb-1">Text Color</label>
-                  <div className="flex gap-1">
+                )}
+
+                {/* Rectangle color picker */}
+                {tool === 'rectangle' && (
+                  <div className="flex gap-1 border-t border-gray-700 pt-2">
+                    {['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#000000', '#ffffff'].map((color) => (
+                      <button
+                        key={color}
+                        onClick={() => setRectangleColor(color)}
+                        className={`w-6 h-6 rounded border-2 ${rectangleColor === color ? 'border-white' : 'border-gray-600'}`}
+                        style={{ backgroundColor: color }}
+                        aria-label={`Select rectangle color ${color}`}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Text color picker */}
+                {tool === 'text' && (
+                  <div className="flex gap-1 border-t border-gray-700 pt-2">
                     {['#000000', '#ffffff', '#ef4444', '#10b981', '#f59e0b', '#3b82f6'].map((color) => (
                       <button
                         key={color}
@@ -1667,82 +1736,114 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                       />
                     ))}
                   </div>
+                )}
+
+                {/* Arrow color picker */}
+                {tool === 'arrow' && (
+                  <>
+                    <div className="border-t border-gray-700 pt-2">
+                      <label className="text-xs text-gray-300 block mb-1">Arrow Color</label>
+                      <div className="flex gap-1">
+                        {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#000000'].map((color) => (
+                          <button
+                            key={color}
+                            onClick={() => setStrokeColor(color)}
+                            className={`w-6 h-6 rounded border-2 ${strokeColor === color ? 'border-white' : 'border-gray-600'}`}
+                            style={{ backgroundColor: color }}
+                            aria-label={`Select arrow color ${color}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-gray-700 pt-2">
+                      <label className="text-xs text-gray-300 block mb-1">Text Color</label>
+                      <div className="flex gap-1">
+                        {['#000000', '#ffffff', '#ef4444', '#10b981', '#f59e0b', '#3b82f6'].map((color) => (
+                          <button
+                            key={color}
+                            onClick={() => handleTextColorClick(color)}
+                            className={`w-6 h-6 rounded border-2 ${effectiveTextColor === color ? 'border-white' : 'border-gray-600'}`}
+                            style={{ backgroundColor: color }}
+                            aria-label={`Select text color ${color}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Stroke width */}
+                {(tool === 'pen' || tool === 'arrow' || tool === 'rectangle') && (
+                  <div className="border-t border-gray-700 pt-2">
+                    <label className="text-xs text-gray-300 block mb-1">Width</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={strokeWidth}
+                      onChange={(e) => setStrokeWidth(parseInt(e.target.value, 10))}
+                      className="w-full"
+                    />
+                  </div>
+                )}
+
+                {/* Undo/Redo/Clear */}
+                <div className="flex gap-1 border-t border-gray-700 pt-2">
+                  <button
+                    onClick={handleUndo}
+                    disabled={!pageAnnotations[currentPage] || pageAnnotations[currentPage].undoStack.length === 0}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
+                    aria-label="Undo"
+                    title="Undo"
+                  >
+                    <UndoIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleRedo}
+                    disabled={!pageAnnotations[currentPage] || pageAnnotations[currentPage].redoStack.length === 0}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
+                    aria-label="Redo"
+                    title="Redo"
+                  >
+                    <RedoIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleClear}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                    aria-label="Clear page"
+                    title="Clear page"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
                 </div>
-              </>
-            )}
 
-            {/* Stroke width */}
-            {(tool === 'pen' || tool === 'arrow' || tool === 'rectangle') && (
-              <div className="border-t border-gray-700 pt-2">
-                <label className="text-xs text-gray-300 block mb-1">Width</label>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={strokeWidth}
-                  onChange={(e) => setStrokeWidth(parseInt(e.target.value, 10))}
-                  className="w-full"
-                />
-              </div>
-            )}
-
-            {/* Undo/Redo/Clear */}
-            <div className="flex gap-1 border-t border-gray-700 pt-2">
-              <button
-                onClick={handleUndo}
-                disabled={!pageAnnotations[currentPage] || pageAnnotations[currentPage].undoStack.length === 0}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
-                aria-label="Undo"
-                title="Undo"
-              >
-                <UndoIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={handleRedo}
-                disabled={!pageAnnotations[currentPage] || pageAnnotations[currentPage].redoStack.length === 0}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
-                aria-label="Redo"
-                title="Redo"
-              >
-                <RedoIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={handleClear}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
-                aria-label="Clear page"
-                title="Clear page"
-              >
-                <TrashIcon className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Zoom controls */}
-            <div className="flex gap-1 border-t border-gray-700 pt-2">
-              <button
-                onClick={handleZoomIn}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
-                aria-label="Zoom in"
-                title="Zoom in"
-              >
-                <ZoomInIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={handleZoomOut}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
-                aria-label="Zoom out"
-                title="Zoom out"
-              >
-                <ZoomOutIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={handleZoomReset}
-                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
-                aria-label="Reset zoom"
-                title="Reset zoom"
-              >
-                <ZoomResetIcon className="h-4 w-4" />
-              </button>
-            </div>
+                {/* Zoom controls */}
+                <div className="flex gap-1 border-t border-gray-700 pt-2">
+                  <button
+                    onClick={handleZoomIn}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                    aria-label="Zoom in"
+                    title="Zoom in"
+                  >
+                    <ZoomInIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleZoomOut}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                    aria-label="Zoom out"
+                    title="Zoom out"
+                  >
+                    <ZoomOutIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleZoomReset}
+                    className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                    aria-label="Reset zoom"
+                    title="Reset zoom"
+                  >
+                    <ZoomResetIcon className="h-4 w-4" />
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -1751,7 +1852,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
       {/* PDF Document */}
       {pdfUrl && pdfLoaded && (
-        <div className="flex-1 overflow-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto">
           <Document
             key={pdfUrl || 'none'}
             file={pdfUrl}
@@ -1770,7 +1871,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
               const baseH = baseDims?.height || (pageWidth * 1.414); // Approximate A4 ratio if not set
               const scaledW = baseW * displayScale;
               const scaledH = baseH * displayScale;
-              
+
               return (
                 <div
                   key={`page_${pageNum}`}
@@ -1779,7 +1880,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                   }}
                   className="relative mb-4 flex justify-center"
                   onMouseEnter={() => setCurrentPage(pageNum)}
-                  style={{ 
+                  style={{
                     width: '100%',
                     height: scaledH,
                   }}
@@ -1810,12 +1911,15 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                           if (el) canvasRefs.current[pageNum] = el;
                         }}
                         className={isAnnotationEnabled ? "cursor-crosshair touch-none" : "touch-none"}
-                        style={{ 
-                          pointerEvents: isAnnotationEnabled ? 'auto' : 'none', 
+                        style={{
+                          pointerEvents: isAnnotationEnabled || scale > 1 ? 'auto' : 'none',
                           position: 'absolute',
                           inset: 0,
                           width: '100%',
                           height: '100%'
+                        }}
+                        onContextMenu={(e) => {
+                          if (scale > 1) e.preventDefault();
                         }}
                         onPointerDown={(e) => handlePointerDown(e, pageNum)}
                         onPointerMove={(e) => handlePointerMove(e, pageNum)}
@@ -1828,18 +1932,18 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                         const textAnnotation = annotation;
                         const isEditing = editingTextId === textAnnotation.id;
                         const baseDims = basePageDimensionsRef.current[pageNum];
-                        
+
                         // Don't render Rnd until base dimensions are available
                         if (!baseDims) return null;
-                        
+
                         const baseW = baseDims.width;
                         const baseH = baseDims.height;
-                        
+
                         const w = textAnnotation.wNorm * baseW;
                         const h = textAnnotation.hNorm * baseH;
                         const x = textAnnotation.xNorm * baseW;
                         const y = textAnnotation.yNorm * baseH;
-                        
+
                         return (
                           <Rnd
                             key={textAnnotation.id}
@@ -1889,7 +1993,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                               editorRefs={editorRefs}
                               onInput={(e) => handleTextInput(textAnnotation.id, pageNum, e)}
                               onFocus={() => setEditingTextId(textAnnotation.id)}
-                              onBlur={() => handleTextBlur(textAnnotation.id, pageNum)}
+                              onBlur={(e) => handleTextBlur(textAnnotation.id, pageNum, e)}
                               getAnnotationHtml={getAnnotationHtml}
                             />
                           </Rnd>
@@ -1955,8 +2059,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                         >
                           <defs>
                             <radialGradient id="rect-gradient-preview">
-                                <stop offset="0%" stopColor="#3b82f6" />
-                                <stop offset="100%" stopColor="#06b6d4" />
+                              <stop offset="0%" stopColor="#3b82f6" />
+                              <stop offset="100%" stopColor="#06b6d4" />
                             </radialGradient>
                           </defs>
                           <rect

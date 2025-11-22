@@ -12,16 +12,16 @@ import AddScanModal from './AddScanModal';
 import GeminiPanel, { AgentsLogo } from './GeminiPanel';
 
 import { saveFileToDB, getFileFromDB, deleteFileFromDB } from '../utils/db';
-import { 
-  buildTreeFromFiles, 
-  flattenTree, 
-  findNodeById, 
-  updateNodeInTree, 
-  removeNodeFromTree, 
-  addNodeToTree, 
-  moveNode, 
-  renameNode,
-  sortNodes
+import {
+    buildTreeFromFiles,
+    flattenTree,
+    findNodeById,
+    updateNodeInTree,
+    removeNodeFromTree,
+    addNodeToTree,
+    moveNode,
+    renameNode,
+    sortNodes
 } from '../utils/fileSystem';
 
 // --- FILE HELPERS ---
@@ -73,12 +73,12 @@ const serializableToFile = async (sFile: SerializableFile): Promise<File> => {
         const bstr = atob(arr[1]);
         let n = bstr.length;
         const u8arr = new Uint8Array(n);
-        while(n--) {
+        while (n--) {
             u8arr[n] = bstr.charCodeAt(n);
         }
         return new File([u8arr], sFile.name, { type: mime });
     }
-    
+
     return new File(["File not found"], sFile.name, { type: "text/plain" });
 };
 
@@ -105,10 +105,10 @@ interface ReportOverlayViewerProps {
     onAddFile?: (files: File[]) => void;
 }
 
-const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({ 
-    files, 
-    selectedIndex, 
-    onClose, 
+const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
+    files,
+    selectedIndex,
+    onClose,
     onSelectFile,
     getFileType,
     onDeleteFile,
@@ -312,7 +312,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                     accept=".pdf,.csv,.glb"
                 />
             )}
-            
+
             {/* Add file button */}
             {onAddFile && (
                 <button
@@ -323,7 +323,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                     <PlusIcon className="h-6 w-6" />
                 </button>
             )}
-            
+
             <button
                 onClick={onClose}
                 className="absolute top-3 right-3 z-40 p-2 bg-gray-800 hover:bg-gray-700 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors"
@@ -331,7 +331,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
             >
                 <CloseIcon className="h-6 w-6" />
             </button>
-            
+
             {/* File selector for multiple files */}
             {(files.length > 1 || (files.length > 0 && onDeleteFile)) && (
                 <div className="flex gap-2 p-4 bg-gray-800/50 border-b border-gray-700 overflow-x-auto">
@@ -339,11 +339,10 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                         <div key={index} className="relative group">
                             <button
                                 onClick={() => onSelectFile(index)}
-                                className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors whitespace-nowrap flex items-center gap-2 ${
-                                    selectedIndex === index
-                                        ? 'bg-cyan-600 text-white'
-                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                                }`}
+                                className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors whitespace-nowrap flex items-center gap-2 ${selectedIndex === index
+                                    ? 'bg-cyan-600 text-white'
+                                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                    }`}
                             >
                                 <span>{file.name}</span>
                                 {onDeleteFile && (
@@ -372,7 +371,7 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
                     ))}
                 </div>
             )}
-            
+
             {renderViewer()}
         </div>
     );
@@ -381,10 +380,10 @@ const ReportOverlayViewer: React.FC<ReportOverlayViewerProps> = ({
 // --- VIEWER PAGE COMPONENT ---
 
 interface ProjectViewerPageProps {
-  project: Project;
-  onBack: () => void;
-  onUpdateProjectName: (newName: string) => void;
-  onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => void;
+    project: Project;
+    onBack: () => void;
+    onUpdateProjectName: (newName: string) => void;
+    onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => void;
 }
 
 const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
@@ -402,16 +401,16 @@ const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
 interface ScanViewerState {
     // Kept for compatibility/reference, but derived from fileSystemTree in this implementation
     centerViewerFiles: Array<{ name: string; url: string; file: File }>;
-    
+
     // New tree structure state
     fileSystemTree: FileSystemNode[];
     selectedNodeId: string | null;
-    
+
     // Which file is currently open in the main viewer
     openedFileId: string | null;
-    
+
     selectedFileIndex: number; // Maintained for compatibility with legacy logic
-    
+
     pdfAnnotations: Record<string, Record<number, PdfAnnotation[]>>;
     pdfAnnotationGroups: Record<string, AnnotationGroup[]>;
     csvData: Record<string, string>[] | null;
@@ -448,22 +447,23 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isGlbActive, setIsGlbActive] = useState(false);
     const [isBimActive, setIsBimActive] = useState(false);
     const [isListDataActive, setIsListDataActive] = useState(false);
-    
+
     // Per-scan viewer state map - keyed by scan date
     const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
-    
+
     // Refs for center viewer
     const centerViewerUrlsRef = useRef<Record<string, string[]>>({});
     const centerViewerFileInputRef = useRef<HTMLInputElement>(null);
-    
+
     // Ref for tracking GLB URLs per scan (for cleanup)
     const glbUrlsRef = useRef<Record<string, string>>({});
-    
+
     // PDF tools panel state
     const [isPdfToolsOpen, setIsPdfToolsOpen] = useState<boolean>(false);
     const [pdfToolbarHandlers, setPdfToolbarHandlers] = useState<PdfToolbarHandlers | null>(null);
     const pdfToolsButtonRef = useRef<HTMLButtonElement>(null);
-    
+    const toolbarRef = useRef<HTMLDivElement>(null);
+
     // Report overlay state
     type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
     const [reportOverlay, setReportOverlay] = useState<{
@@ -482,17 +482,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isMetricsPanelCollapsed, setIsMetricsPanelCollapsed] = useState(() => {
         return localStorage.getItem('maestro4d_metricsPanelCollapsed') === 'true';
     });
-    
+
     // State for tracking active insight chat in right panel
     const [activeInsightChatId, setActiveInsightChatId] = useState<string | null>(null);
     const [highlightedInsightId, setHighlightedInsightId] = useState<string | null>(null);
-    
+
     // File type detection utility - defined early to avoid temporal dead zone issues
     const getFileType = (file: File): 'pdf' | 'csv' | 'glb' | 'image' | 'other' => {
         try {
             const extension = file.name.split('.').pop()?.toLowerCase() || '';
             const mimeType = file.type.toLowerCase();
-            
+
             if (extension === 'pdf' || mimeType === 'application/pdf') return 'pdf';
             if (extension === 'csv' || mimeType === 'text/csv' || mimeType === 'text/comma-separated-values') return 'csv';
             if (extension === 'glb' || mimeType === 'model/gltf-binary') return 'glb';
@@ -506,18 +506,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             return 'other';
         }
     };
-    
+
     // Helper function to generate unique file identifier
     const getFileIdentifier = (file: File): string => {
         return `${file.name}_${file.size}`;
     };
-    
+
     // Helper functions to get/update current scan's viewer state
     const getCurrentScanViewerState = useCallback((): ScanViewerState => {
         if (!currentScanDate) return EMPTY_SCAN_VIEWER_STATE;
         return scanViewerState[currentScanDate] || EMPTY_SCAN_VIEWER_STATE;
     }, [currentScanDate, scanViewerState]);
-    
+
     const updateCurrentScanViewerState = useCallback((updater: (state: ScanViewerState) => ScanViewerState) => {
         if (!currentScanDate) return;
         setScanViewerState(prev => ({
@@ -525,10 +525,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             [currentScanDate]: updater(prev[currentScanDate] || EMPTY_SCAN_VIEWER_STATE)
         }));
     }, [currentScanDate]);
-    
+
     // Memoized current scan viewer state
     const currentScanViewerState = useMemo(() => getCurrentScanViewerState(), [getCurrentScanViewerState]);
-    
+
     useEffect(() => {
         localStorage.setItem('maestro4d_insightsPanelCollapsed', String(isInsightsPanelCollapsed));
     }, [isInsightsPanelCollapsed]);
@@ -568,7 +568,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             nameInputRef.current.select();
         }
     }, [isEditingName]);
-    
+
     useEffect(() => {
         setEditedName(project.name);
     }, [project.name]);
@@ -626,7 +626,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         const loadFiles = async () => {
             for (const scan of initialScans) {
                 if (!scan.centerViewerFiles || scan.centerViewerFiles.length === 0) continue;
-                
+
                 try {
                     // Reconstruct file objects from serializable
                     const hydratedFiles = await Promise.all(scan.centerViewerFiles.map(async sFile => {
@@ -637,7 +637,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             centerViewerUrlsRef.current[scan.date] = [];
                         }
                         centerViewerUrlsRef.current[scan.date].push(url);
-                        
+
                         // Attach path from serialized object if available, or use name
                         if (sFile.path) {
                             Object.defineProperty(file, 'webkitRelativePath', {
@@ -645,7 +645,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                 writable: false
                             });
                         }
-                        
+
                         return { name: file.name, url, file };
                     }));
 
@@ -675,17 +675,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         const latestScanDate = initialScans.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.date || project.lastScan.date;
         setCurrentScanDate(latestScanDate);
     }, [project.id]);
-    
+
     const handleDateChange = (newDate: string) => {
         setCurrentScanDate(newDate);
     };
-    
+
     // Reset UI elements when scan changes
     useEffect(() => {
         // Close PDF tools panel
         setIsPdfToolsOpen(false);
         setPdfToolbarHandlers(null);
-        
+
         // Close active insight chat
         setActiveInsightChatId(null);
     }, [currentScanDate]);
@@ -698,7 +698,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }
         setIsAddScanModalOpen(true);
     };
-    
+
     const handleToggleDeleteMode = () => {
         setIsDeleteMode(prev => !prev);
         setSelectedScanDates([]);
@@ -740,7 +740,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleConfirmDelete = () => {
         if (selectedScanDates.length === 0) return;
-        
+
         // Clean up URLs for deleted scans
         selectedScanDates.forEach(date => {
             const state = scanViewerState[date];
@@ -769,17 +769,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 }
             });
         });
-        
+
         // Remove selected scans
         const updatedScans = scans.filter(scan => !selectedScanDates.includes(scan.date));
-        
+
         // Remove viewer state for deleted scans
         setScanViewerState(prev => {
             const updated = { ...prev };
             selectedScanDates.forEach(date => delete updated[date]);
             return updated;
         });
-        
+
         // If current scan is being deleted, switch to the latest remaining scan
         if (selectedScanDates.includes(currentScanDate)) {
             if (updatedScans.length > 0) {
@@ -791,15 +791,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 setCurrentScanDate('');
             }
         }
-        
+
         setScans(updatedScans);
         setIsDeleteMode(false);
         setSelectedScanDates([]);
-        
+
         // Persist the deletion
         onSaveProject(updatedScans, agentStates);
     };
-    
+
     const handleConfirmAddScan = (newDate: string) => {
         // If date already exists, just select it instead of creating a duplicate
         if (scans.some(s => s.date === newDate)) {
@@ -819,13 +819,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Add new scan and sort the array by date to maintain chronological order
         const updatedScans = [...scans, newScan];
         updatedScans.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        
+
         // Initialize empty viewer state for the new scan
         setScanViewerState(prev => ({
             ...prev,
             [newDate]: EMPTY_SCAN_VIEWER_STATE
         }));
-        
+
         setScans(updatedScans);
         setCurrentScanDate(newDate);
         setIsAddScanModalOpen(false);
@@ -864,13 +864,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     }, [currentScan, project.name, currentScanDate]);
 
     const handleUploadInsights = (newInsights: Insight[]) => {
-        setScans(prev => prev.map(scan => 
+        setScans(prev => prev.map(scan =>
             scan.date === currentScanDate ? { ...scan, insights: newInsights } : scan
         ));
     };
 
     const handleAddInsights = (newInsights: Insight[]) => {
-        setScans(prev => prev.map(scan => 
+        setScans(prev => prev.map(scan =>
             scan.date === currentScanDate ? { ...scan, insights: [...scan.insights, ...newInsights] } : scan
         ));
     };
@@ -878,7 +878,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleInsightStatusChange = (insightId: string, newStatus: InsightStatus) => {
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
-                const newInsights = scan.insights.map(i => 
+                const newInsights = scan.insights.map(i =>
                     i.id === insightId ? { ...i, status: newStatus } : i
                 );
                 return { ...scan, insights: newInsights };
@@ -907,7 +907,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             return scan;
         }));
     };
-    
+
     const handleReassignTrade = (insightId: string, newTrade: string) => {
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
@@ -942,8 +942,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     if (i.id === insightId) {
                         const existingFiles = i.files || [];
                         // Filter out duplicates
-                        const newFiles = files.filter(file => 
-                            !existingFiles.some(existing => 
+                        const newFiles = files.filter(file =>
+                            !existingFiles.some(existing =>
                                 existing.name === file.name && existing.size === file.size
                             )
                         );
@@ -959,29 +959,29 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleModelUpload = (url: string) => {
         if (!currentScanDate) return;
-        
+
         // Revoke old GLB URL for this scan if it exists
         const oldUrl = glbUrlsRef.current[currentScanDate];
         if (oldUrl && oldUrl !== url) {
             URL.revokeObjectURL(oldUrl);
         }
-        
+
         // Store new GLB URL
         glbUrlsRef.current[currentScanDate] = url;
-        
-        setScans(prev => prev.map(scan => 
+
+        setScans(prev => prev.map(scan =>
             scan.date === currentScanDate ? { ...scan, modelUrl: url } : scan
         ));
     };
 
     const handlePdfUpload = (url: string) => {
-        setScans(prev => prev.map(scan => 
+        setScans(prev => prev.map(scan =>
             scan.date === currentScanDate ? { ...scan, pdfUrl: url, pdfAnnotations: {} } : scan
         ));
     };
 
     const handlePdfAnnotationsChange = (annotations: Record<number, PdfAnnotation[]>) => {
-        setScans(prev => prev.map(scan => 
+        setScans(prev => prev.map(scan =>
             scan.date === currentScanDate ? { ...scan, pdfAnnotations: annotations } : scan
         ));
     };
@@ -1014,7 +1014,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleThreeDAnnotationDelete = (annotationId: string) => {
         if (!currentScanDate) return;
-        
+
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
                 return {
@@ -1038,7 +1038,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleToggleExpand = useCallback((node: FileSystemNode) => {
         if (node.type !== 'folder') return;
-        
+
         updateCurrentScanViewerState(state => ({
             ...state,
             fileSystemTree: updateNodeInTree(state.fileSystemTree, node.id, { expanded: !node.expanded })
@@ -1047,19 +1047,19 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const handleOpenFile = useCallback((node: FileSystemNode) => {
         if (node.type !== 'file' || !node.file) return;
-        
+
         updateCurrentScanViewerState(state => {
             const allNodes = flattenTree(state.fileSystemTree);
             const fileNodes = allNodes.filter(n => n.type === 'file');
             const fileIndex = fileNodes.findIndex(n => n.id === node.id);
-            
+
             // Ensure the file has a URL in centerViewerFiles
             let updatedFiles = [...state.centerViewerFiles];
-            const existingIndex = updatedFiles.findIndex(f => 
-                f.file === node.file || 
+            const existingIndex = updatedFiles.findIndex(f =>
+                f.file === node.file ||
                 (f.name === node.name && f.file.size === node.file.size)
             );
-            
+
             if (existingIndex >= 0) {
                 // File exists, ensure it has a URL
                 const existingFile = updatedFiles[existingIndex];
@@ -1080,7 +1080,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     file: node.file
                 });
             }
-            
+
             return {
                 ...state,
                 centerViewerFiles: updatedFiles,
@@ -1094,18 +1094,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleRenameNode = useCallback((node: FileSystemNode, newName: string) => {
         updateCurrentScanViewerState(state => {
             const newTree = renameNode(state.fileSystemTree, node.id, newName);
-            
+
             // Also need to update the persistence (Project/Scan data)
             // This is tricky because we need to map back to centerViewerFiles
             // For now, we just update state and rely on saveProject to trigger later
-            
+
             // Update scan state for persistence
             const allNodes = flattenTree(newTree);
             const filesOnly = allNodes.filter(n => n.type === 'file' && n.file);
-            
+
             // We need to update the file object's path if we can (read-only) or just tracking
             // In persistence we save `path`
-            
+
             // Trigger persistence update
             setTimeout(() => {
                 setScans(prev => prev.map(scan => {
@@ -1136,11 +1136,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleDeleteNode = useCallback((node: FileSystemNode) => {
         updateCurrentScanViewerState(state => {
             const newTree = removeNodeFromTree(state.fileSystemTree, node.id);
-            
+
             // If deleted node was selected or opened, reset selection
             const wasSelected = state.selectedNodeId === node.id || (node.type === 'folder' && findNodeById([node], state.selectedNodeId || ''));
             const wasOpened = state.openedFileId === node.id || (node.type === 'folder' && findNodeById([node], state.openedFileId || ''));
-            
+
             return {
                 ...state,
                 fileSystemTree: newTree,
@@ -1148,29 +1148,29 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 openedFileId: wasOpened ? null : state.openedFileId
             };
         });
-        
+
         // Update persistence
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
                 const nodesToDelete = flattenTree([node]);
                 const fileNodesToDelete = nodesToDelete.filter(n => n.type === 'file' && n.file);
-                
+
                 // We need to remove these from centerViewerFiles in scan
                 // But we don't have direct mapping here easily without ID map
                 // Simpler: rebuild centerViewerFiles from the NEW tree
-                
+
                 // But we need to actually delete from DB to clean up storage
                 // This part is missing: we need storageIds
-                
+
                 // Reconstruct valid files list from state (pre-update) is hard because we are in setScans callback
                 // Better to rely on the updateCurrentScanViewerState to have updated the tree, 
                 // then we read the NEW tree to save.
-                
+
                 // Let's do a second pass for persistence after state update
                 setTimeout(() => {
                     updatePersistenceFromTree();
                 }, 0);
-                
+
                 return scan;
             }
             return scan;
@@ -1182,7 +1182,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             ...state,
             fileSystemTree: moveNode(state.fileSystemTree, nodeId, targetParentId)
         }));
-        
+
         setTimeout(() => {
             updatePersistenceFromTree();
         }, 0);
@@ -1198,7 +1198,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             expanded: false,
             parentId
         };
-        
+
         // We need correct path
         updateCurrentScanViewerState(state => {
             let parentPath = '';
@@ -1207,7 +1207,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 if (parent) parentPath = parent.path;
             }
             newFolder.path = parentPath ? `${parentPath}/${newFolder.name}` : newFolder.name;
-            
+
             const newTree = addNodeToTree(state.fileSystemTree, newFolder, parentId);
             return {
                 ...state,
@@ -1215,7 +1215,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 selectedNodeId: newFolder.id // Select the new folder
             };
         });
-        
+
         setTimeout(() => {
             updatePersistenceFromTree();
         }, 0);
@@ -1223,25 +1223,25 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     const updatePersistenceFromTree = useCallback(() => {
         if (!currentScanDate) return;
-        
+
         // Get current tree from state ref or we need to pass it in
         // Since we are using hooks, we can rely on the state in next render cycle
         // OR we can access the state setter to get current state
-        
+
         setScanViewerState(prevState => {
             const state = prevState[currentScanDate];
             if (!state) return prevState;
-            
+
             const allNodes = flattenTree(state.fileSystemTree);
             const fileNodes = allNodes.filter(n => n.type === 'file' && n.file);
-            
+
             // We need to map these nodes back to SerializableFiles
             // We need to preserve storageId if it exists in the original list
             // But wait, we only have the file object in node
-            
+
             // This is a complex part: mapping File objects back to their DB IDs
             // We can try to match by name/size/type against the previous scan data?
-            
+
             setScans(prevScans => prevScans.map(scan => {
                 if (scan.date === currentScanDate) {
                     // Create map of existing files for ID lookup
@@ -1254,41 +1254,41 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             // For now, let's assume new files = new IDs, old files = tricky
                         }
                     });
-                    
+
                     // Since we can't easily recover IDs without storing them on nodes,
                     // and we didn't add storageId to FileSystemNode,
                     // we might re-upload renamed files as new files. 
                     // Ideally FileSystemNode should have storageId.
-                    
+
                     // Let's accept that for this MVP, renaming might break link to DB ID if not careful.
                     // But wait, we use `fileToSerializable` which saves to DB.
-                    
+
                     // We need to be async here to save new files
                     // This cannot be done synchronously inside setScans
-                    
+
                     return scan;
                 }
                 return scan;
             }));
-            
+
             // Actually, let's trigger a side effect to save
             saveTreeToScans(state.fileSystemTree);
-            
+
             return prevState;
         });
     }, [currentScanDate]);
 
     const saveTreeToScans = async (tree: FileSystemNode[]) => {
         if (!currentScanDate) return;
-        
+
         const allNodes = flattenTree(tree);
         const fileNodes = allNodes.filter(n => n.type === 'file' && n.file);
-        
+
         const serializableFiles = await Promise.all(fileNodes.map(n => {
             if (!n.file) throw new Error("Node missing file");
             return fileToSerializable(n.file, n.path);
         }));
-        
+
         setScans(prev => prev.map(scan => {
             if (scan.date === currentScanDate) {
                 return {
@@ -1303,7 +1303,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Center viewer file management handlers
     const handleCenterViewerAddFile = useCallback(async (files: File[]) => {
         if (!files || files.length === 0 || !currentScanDate) return;
-        
+
         // Filter out macOS metadata files and other system files
         const validFiles = files.filter(file => {
             const name = file.name;
@@ -1315,13 +1315,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
 
         if (validFiles.length === 0) return;
-        
+
         try {
             // Initialize URLs array for this scan if it doesn't exist
             if (!centerViewerUrlsRef.current[currentScanDate]) {
                 centerViewerUrlsRef.current[currentScanDate] = [];
             }
-            
+
             let glbUrl: string | undefined;
 
             const newFileData = validFiles.map(file => {
@@ -1330,7 +1330,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 }
                 const url = URL.createObjectURL(file);
                 centerViewerUrlsRef.current[currentScanDate].push(url);
-                
+
                 if (getFileType(file) === 'glb') {
                     glbUrl = url;
                 }
@@ -1346,17 +1346,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 glbUrlsRef.current[currentScanDate] = glbUrl;
                 // We will update scans modelUrl below
             }
-            
+
             updateCurrentScanViewerState(state => {
                 const currentTree = state.fileSystemTree;
                 const newTreeNodes = buildTreeFromFiles(validFiles);
-                
+
                 // Merge new nodes into existing tree
                 let mergedTree = [...currentTree];
                 newTreeNodes.forEach(node => {
                     mergedTree = addNodeToTree(mergedTree, node, undefined);
                 });
-                
+
                 // Flatten for legacy support
                 const allNodes = flattenTree(mergedTree);
                 const allFiles = allNodes.filter(n => n.type === 'file' && n.file).map(n => {
@@ -1364,8 +1364,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     // Since we just added it, we can find it in newFileData
                     // Or existing files
                     const match = newFileData.find(f => f.name === n.name && f.file.size === n.file?.size) ||
-                                  state.centerViewerFiles.find(f => f.name === n.name && f.file.size === n.file?.size);
-                                  
+                        state.centerViewerFiles.find(f => f.name === n.name && f.file.size === n.file?.size);
+
                     if (match) return match;
                     // Fallback creating url
                     const url = URL.createObjectURL(n.file!);
@@ -1405,28 +1405,28 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // or just remove from flat list and rebuild tree? 
         // Better to use handleDeleteNode directly for tree view
         // But for compatibility if called from other places:
-        
+
         if (!currentScanDate) return;
-        
+
         updateCurrentScanViewerState(state => {
             const fileToDelete = state.centerViewerFiles[index];
             if (!fileToDelete) return state;
-            
+
             // Find node for this file
             const allNodes = flattenTree(state.fileSystemTree);
             const nodeToDelete = allNodes.find(n => n.type === 'file' && n.file === fileToDelete.file);
-            
+
             if (nodeToDelete) {
                 // Reuse tree delete logic
                 const newTree = removeNodeFromTree(state.fileSystemTree, nodeToDelete.id);
-                
+
                 // Clean up URLs
                 if (fileToDelete.url) {
                     URL.revokeObjectURL(fileToDelete.url);
                 }
-                
+
                 const newFiles = state.centerViewerFiles.filter((_, i) => i !== index);
-                
+
                 return {
                     ...state,
                     fileSystemTree: newTree,
@@ -1434,10 +1434,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     selectedFileIndex: Math.min(state.selectedFileIndex, newFiles.length - 1)
                 };
             }
-            
+
             return state;
         });
-        
+
         // Trigger persistence update
         setTimeout(() => {
             setScanViewerState(prev => {
@@ -1448,7 +1448,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 return prev;
             });
         }, 100);
-        
+
     }, [currentScanDate, updateCurrentScanViewerState]);
 
     const handleCenterViewerFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1460,28 +1460,28 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             }
         }
     };
-    
+
     // Handler for PDF upload in center viewer (when user changes PDF via PdfViewer)
     const handleCenterViewerPdfUpload = useCallback((url: string) => {
         if (!currentScanDate) return;
-        
+
         updateCurrentScanViewerState(state => {
             const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
             if (validIndex < 0) return state;
-            
+
             return {
                 ...state,
-                centerViewerFiles: state.centerViewerFiles.map((file, index) => 
+                centerViewerFiles: state.centerViewerFiles.map((file, index) =>
                     index === validIndex ? { ...file, url } : file
                 )
             };
         });
     }, [currentScanDate, updateCurrentScanViewerState]);
-    
+
     // Handler for PDF annotation changes in center viewer
     const handleCenterViewerPdfAnnotationsChange = useCallback((annotations: Record<number, PdfAnnotation[]>) => {
         if (!currentScanDate) return;
-        
+
         updateCurrentScanViewerState(state => {
             const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
             if (validIndex >= 0 && state.centerViewerFiles[validIndex]) {
@@ -1501,7 +1501,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Handler for PDF annotation groups change in center viewer
     const handleCenterViewerPdfAnnotationGroupsChange = useCallback((groups: AnnotationGroup[]) => {
         if (!currentScanDate) return;
-        
+
         updateCurrentScanViewerState(state => {
             const validIndex = state.centerViewerFiles.length > 0 ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1) : -1;
             if (validIndex >= 0 && state.centerViewerFiles[validIndex]) {
@@ -1513,12 +1513,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         [fileId]: groups
                     }
                 };
-                
+
                 // Generate/update the 2-pager brief PDF if we have groups
                 if (groups.length > 0) {
                     generateBriefPdf(groups, fileId, newState);
                 }
-                
+
                 return newState;
             }
             return state;
@@ -1528,7 +1528,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Generate the 2-Pager Brief PDF from annotation groups
     const generateBriefPdf = useCallback(async (groups: AnnotationGroup[], sourceFileId: string, state: ScanViewerState) => {
         if (!currentScanDate) return;
-        
+
         try {
             const jsPDF = (await import('jspdf')).default;
             const doc = new jsPDF();
@@ -1536,7 +1536,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             const pageHeight = doc.internal.pageSize.getHeight();
             const margin = 14;
             const contentWidth = pageWidth - (margin * 2);
-            
+
             // Header
             doc.setFillColor(31, 41, 55); // gray-800
             doc.rect(0, 0, pageWidth, 25, 'F');
@@ -1545,35 +1545,35 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             doc.text('2-Pager Brief: Maestro Construction Data', pageWidth / 2, 12, { align: 'center' });
             doc.setFontSize(10);
             doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth / 2, 20, { align: 'center' });
-            
+
             let yPos = margin + 30;
             let currentPage = 1;
             const maxY = pageHeight - margin - 20;
-            
+
             // Add each annotation group (using for loop for async/await)
             for (let index = 0; index < groups.length; index++) {
                 const group = groups[index];
-                
+
                 // Check if we need a new page
                 if (yPos > maxY - 80) {
                     doc.addPage();
                     currentPage++;
                     yPos = margin + 10;
                 }
-                
+
                 // Group header
                 doc.setFontSize(12);
                 doc.setTextColor(0, 0, 0);
                 doc.setFont(undefined, 'bold');
                 doc.text(`Annotation ${index + 1} - Page ${group.pageNumber}`, margin, yPos);
                 yPos += 8;
-                
+
                 // Load and add snapshot image
                 if (group.snapshotDataUrl) {
                     try {
                         const img = new Image();
                         img.src = group.snapshotDataUrl;
-                        
+
                         await new Promise<void>((resolve, reject) => {
                             img.onload = () => {
                                 try {
@@ -1582,19 +1582,19 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     const maxImgHeight = 60;
                                     let imgWidth = img.width;
                                     let imgHeight = img.height;
-                                    
+
                                     // Scale to fit
                                     const scale = Math.min(maxImgWidth / imgWidth, maxImgHeight / imgHeight);
                                     imgWidth *= scale;
                                     imgHeight *= scale;
-                                    
+
                                     // Check if image fits on current page
                                     if (yPos + imgHeight > maxY) {
                                         doc.addPage();
                                         currentPage++;
                                         yPos = margin + 10;
                                     }
-                                    
+
                                     doc.addImage(group.snapshotDataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
                                     yPos += imgHeight + 5;
                                     resolve();
@@ -1612,13 +1612,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         yPos += 10;
                     }
                 }
-                
+
                 // Add text description
                 doc.setFontSize(10);
                 doc.setTextColor(0, 0, 0);
                 doc.setFont(undefined, 'normal');
                 const textLines = doc.splitTextToSize(group.text || '[No description]', contentWidth);
-                
+
                 // Check if text fits on current page
                 const textHeight = textLines.length * 5;
                 if (yPos + textHeight > maxY) {
@@ -1626,10 +1626,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     currentPage++;
                     yPos = margin + 10;
                 }
-                
+
                 doc.text(textLines, margin, yPos);
                 yPos += textHeight + 10;
-                
+
                 // Add separator line
                 if (index < groups.length - 1) {
                     doc.setDrawColor(200, 200, 200);
@@ -1637,7 +1637,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     yPos += 5;
                 }
             }
-            
+
             // Add page numbers
             for (let i = 1; i <= currentPage; i++) {
                 doc.setPage(i);
@@ -1645,18 +1645,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 doc.setTextColor(150, 150, 150);
                 doc.text(`Page ${i} of ${currentPage}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
             }
-            
+
             // Convert PDF to blob and create File object
             const pdfBlob = doc.output('blob');
             const pdfFile = new File([pdfBlob], '2-Pager Brief_ Maestro Construction Data.pdf', { type: 'application/pdf' });
             const pdfUrl = URL.createObjectURL(pdfFile);
-            
+
             // Add URL to ref for cleanup
             if (!centerViewerUrlsRef.current[currentScanDate]) {
                 centerViewerUrlsRef.current[currentScanDate] = [];
             }
             centerViewerUrlsRef.current[currentScanDate].push(pdfUrl);
-            
+
             // Serialize for persistence
             let serializableBriefFile: SerializableFile | undefined;
             try {
@@ -1674,11 +1674,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     if (existingUrl) {
                         URL.revokeObjectURL(existingUrl);
                     }
-                    
+
                     return {
                         ...currentState,
-                        centerViewerFiles: currentState.centerViewerFiles.map((file, index) => 
-                            index === currentState.briefFileIndex 
+                        centerViewerFiles: currentState.centerViewerFiles.map((file, index) =>
+                            index === currentState.briefFileIndex
                                 ? { ...file, url: pdfUrl, file: pdfFile }
                                 : file
                         )
@@ -1701,16 +1701,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         const currentState = scanViewerState[currentScanDate];
                         const currentFiles = scan.centerViewerFiles || [];
                         let newFiles = [...currentFiles];
-                        
+
                         // Try to match brief file logic with state
                         if (currentState && currentState.briefFileIndex !== null && currentState.briefFileIndex < newFiles.length) {
-                             // Replace existing
-                             newFiles[currentState.briefFileIndex] = serializableBriefFile;
+                            // Replace existing
+                            newFiles[currentState.briefFileIndex] = serializableBriefFile;
                         } else {
                             // Append
                             newFiles.push(serializableBriefFile);
                         }
-                        
+
                         return {
                             ...scan,
                             centerViewerFiles: newFiles
@@ -1744,35 +1744,35 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Ensure selectedFileIndex is always valid - memoize to avoid reference errors
     const validSelectedIndex = useMemo(() => {
         const state = currentScanViewerState;
-        return state.centerViewerFiles.length > 0 
+        return state.centerViewerFiles.length > 0
             ? Math.min(state.selectedFileIndex, state.centerViewerFiles.length - 1)
             : -1;
     }, [currentScanViewerState]);
-    
+
     const selectedCenterFile = useMemo(() => {
         const state = currentScanViewerState;
-        
+
         if (state.openedFileId) {
             const allNodes = flattenTree(state.fileSystemTree);
             const node = allNodes.find(n => n.id === state.openedFileId);
             if (node && node.file) {
                 // Find in centerViewerFiles with robust matching
-                const match = state.centerViewerFiles.find(f => 
-                    f.file === node.file || 
+                const match = state.centerViewerFiles.find(f =>
+                    f.file === node.file ||
                     (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
                 );
                 if (match && match.url) return match;
             }
         }
-        
+
         // Fallback to index-based selection
         return validSelectedIndex >= 0 ? state.centerViewerFiles[validSelectedIndex] : undefined;
     }, [currentScanViewerState, validSelectedIndex]);
-    
+
     const centerFileType = useMemo(() => {
         return selectedCenterFile ? getFileType(selectedCenterFile.file) : 'other';
     }, [selectedCenterFile]);
-    
+
     useEffect(() => {
         if (centerFileType === 'csv' && selectedCenterFile) {
             updateCurrentScanViewerState(state => ({ ...state, csvLoading: true, csvError: null }));
@@ -1821,8 +1821,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         if (isGlbActive) {
             return (
                 <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                    <Viewer 
-                        modelUrl={currentScan?.modelUrl} 
+                    <Viewer
+                        modelUrl={currentScan?.modelUrl}
                         onModelUpload={handleModelUpload}
                         annotations={currentScan?.threeDAnnotations}
                         onAnnotationAdd={handleThreeDAnnotationAdd}
@@ -1833,7 +1833,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 </div>
             );
         }
-        
+
         if (!selectedCenterFile) {
             return (
                 <div className="flex-1 flex items-center justify-center bg-gray-900">
@@ -1858,7 +1858,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 const currentAnnotations = fileId ? (currentScanViewerState.pdfAnnotations[fileId] || {}) : {};
                 const currentGroups = fileId ? (currentScanViewerState.pdfAnnotationGroups[fileId] || []) : [];
                 return (
-                    <div className="flex-1 min-h-0 overflow-auto">
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                         <PdfViewer
                             pdfUrl={selectedCenterFile.url}
                             onPdfUpload={handleCenterViewerPdfUpload}
@@ -1870,6 +1870,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onToolsOpenChange={setIsPdfToolsOpen}
                             renderToolbarExternally={true}
                             onToolbarHandlersReady={setPdfToolbarHandlers}
+                            toolbarRef={toolbarRef}
                         />
                     </div>
                 );
@@ -1934,7 +1935,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             case 'glb':
                 return (
                     <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                        <Viewer 
+                        <Viewer
                             modelUrl={selectedCenterFile.url}
                             onModelUpload={handleModelUpload}
                             annotations={currentScan?.threeDAnnotations}
@@ -1999,7 +2000,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             // Revoke URLs
             reportUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
             reportUrlsRef.current = [];
-            
+
             return { type: null, files: [], selectedIndex: 0 };
         });
     };
@@ -2008,19 +2009,19 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleDeleteFile = useCallback((index: number) => {
         setReportOverlay(prev => {
             if (!prev.onDeleteFile) return prev;
-            
+
             // Revoke URL for the file being deleted
             if (prev.files[index]?.url) {
                 URL.revokeObjectURL(prev.files[index].url);
                 reportUrlsRef.current = reportUrlsRef.current.filter(url => url !== prev.files[index].url);
             }
-            
+
             // Call the delete callback to update the source
             prev.onDeleteFile(index);
-            
+
             // Update local state
             const newFiles = prev.files.filter((_, i) => i !== index);
-            
+
             // Handle edge cases: if current file is deleted, switch to first remaining or close
             let newSelectedIndex = prev.selectedIndex;
             if (index === prev.selectedIndex) {
@@ -2037,7 +2038,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 // Adjust selected index if a file before it was deleted
                 newSelectedIndex = prev.selectedIndex - 1;
             }
-            
+
             return {
                 ...prev,
                 files: newFiles,
@@ -2086,7 +2087,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
             <header className="relative flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 min-h-[88px]">
                 <div className="relative z-20 flex items-center gap-3 flex-shrink-0">
-                    <div 
+                    <div
                         onClick={onBack}
                         className="cursor-pointer group"
                         role="button"
@@ -2095,7 +2096,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     >
                         <ArrowLeftIcon className="h-5 w-5 text-gray-400 group-hover:text-cyan-400 transition-colors" />
                     </div>
-                     {isEditingName ? (
+                    {isEditingName ? (
                         <input
                             ref={nameInputRef}
                             type="text"
@@ -2116,7 +2117,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="pointer-events-auto w-full max-w-[calc(100%-500px)]">
-                        <TimelineScrubber 
+                        <TimelineScrubber
                             scanDates={[...new Set(scans.map(s => s.date))]}
                             currentDate={currentScanDate}
                             onDateChange={handleDateChange}
@@ -2133,9 +2134,9 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         />
                     </div>
                 </div>
-                
+
                 <div className="relative z-20 flex-shrink-0 flex items-center gap-4">
-                    <button 
+                    <button
                         onClick={() => setIsAgentsLauncherOpen(!isAgentsLauncherOpen)}
                         className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-8 flex items-center justify-center shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-cyan-500 focus:outline-none focus:ring-cyan-400"
                         aria-expanded={isAgentsLauncherOpen}
@@ -2155,7 +2156,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     >
                         {isInsightsPanelCollapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronLeftIcon className="h-4 w-4" />}
                     </button>
-                    
+
                     {isInsightsPanelCollapsed ? (
                         <div
                             className="w-full h-full flex items-center justify-center cursor-pointer bg-gray-900 border-r border-gray-800"
@@ -2166,7 +2167,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             </h2>
                         </div>
                     ) : (
-                         <div className="w-full h-full flex flex-col border-r border-gray-800 overflow-hidden">
+                        <div className="w-full h-full flex flex-col border-r border-gray-800 overflow-hidden">
                             <InsightsList
                                 insights={currentScan?.insights || []}
                                 onUploadInsights={handleUploadInsights}
@@ -2193,17 +2194,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         onChange={handleCenterViewerFileInputChange}
                         accept=".pdf,.csv,.glb,.png,.jpg,.jpeg,.gif,.webp"
                     />
-                    
+
                     {/* PDF Tools Button */}
                     {centerFileType === 'pdf' && (
                         <button
                             ref={pdfToolsButtonRef}
                             onClick={() => setIsPdfToolsOpen(!isPdfToolsOpen)}
-                            className={`absolute top-4 right-4 z-20 p-2 backdrop-blur-sm text-white rounded-md border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors shadow-lg ${
-                                isPdfToolsOpen 
-                                    ? 'bg-cyan-600 border-cyan-500 hover:bg-cyan-700' 
-                                    : 'bg-gray-800/80 border-white/10 hover:bg-gray-700'
-                            }`}
+                            className={`absolute top-4 right-4 z-20 p-2 backdrop-blur-sm text-white rounded-md border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors shadow-lg ${isPdfToolsOpen
+                                ? 'bg-cyan-600 border-cyan-500 hover:bg-cyan-700'
+                                : 'bg-gray-800/80 border-white/10 hover:bg-gray-700'
+                                }`}
                             aria-label="Toggle PDF tools"
                             aria-pressed={isPdfToolsOpen}
                             type="button"
@@ -2211,22 +2211,22 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             <PencilIcon className="h-5 w-5" />
                         </button>
                     )}
-                    
+
                     {/* PDF Tools Panel */}
                     {centerFileType === 'pdf' && isPdfToolsOpen && pdfToolbarHandlers && (
-                        <div className="absolute top-16 right-4 z-30 shadow-xl">
+                        <div ref={toolbarRef} className="absolute top-16 right-4 z-30 shadow-xl">
                             <PdfToolsPanel
                                 {...pdfToolbarHandlers}
                                 onClose={() => setIsPdfToolsOpen(false)}
                             />
                         </div>
                     )}
-                    
+
                     {/* File viewer content */}
                     {renderCenterViewerContent()}
-                    
-                    <GeminiPanel 
-                        agentStates={agentStates} 
+
+                    <GeminiPanel
+                        agentStates={agentStates}
                         onAgentStatesChange={setAgentStates}
                         isLauncherOpen={isAgentsLauncherOpen}
                         onLauncherOpenChange={setIsAgentsLauncherOpen}
@@ -2234,7 +2234,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
                     {/* Report Overlay */}
                     {reportOverlay.type && (
-                        <ReportOverlayViewer 
+                        <ReportOverlayViewer
                             files={reportOverlay.files}
                             selectedIndex={reportOverlay.selectedIndex}
                             onClose={closeReportOverlay}
@@ -2245,7 +2245,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         />
                     )}
                 </div>
-                
+
                 {/* Metrics Panel (Right) */}
                 <div className={`relative flex-shrink-0 transition-all duration-300 ease-in-out ${isMetricsPanelCollapsed ? 'w-12' : 'w-[24rem]'}`}>
                     <button
@@ -2256,7 +2256,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     >
                         {isMetricsPanelCollapsed ? <ChevronLeftIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
                     </button>
-                    
+
                     {isMetricsPanelCollapsed ? (
                         <div
                             className="w-full h-full flex items-center justify-center cursor-pointer bg-gray-900 border-l border-gray-800"
@@ -2279,15 +2279,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     />
                                 ) : null;
                             })() : (
-                                <ReferencePanel 
-                                    summary={projectSummary} 
-                                    insights={currentScan?.insights || []} 
-                                    progress={project.progress} 
+                                <ReferencePanel
+                                    summary={projectSummary}
+                                    insights={currentScan?.insights || []}
+                                    progress={project.progress}
                                     onViewReport={handleViewReport}
                                     onAddInsights={handleAddInsights}
                                     isListDataActive={isListDataActive}
                                     onToggleListData={handleToggleListData}
-                                    
+
                                     // Legacy Props
                                     centerViewerFiles={currentScanViewerState.centerViewerFiles}
                                     selectedFileIndex={currentScanViewerState.selectedFileIndex}
@@ -2295,7 +2295,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     onDeleteFile={handleCenterViewerDeleteFile}
                                     onAddFile={handleCenterViewerAddFile}
                                     fileInputRef={centerViewerFileInputRef}
-                                    
+
                                     // New Folder Tree Props
                                     fileSystemTree={currentScanViewerState.fileSystemTree}
                                     selectedNodeId={currentScanViewerState.selectedNodeId}

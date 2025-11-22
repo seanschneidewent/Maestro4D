@@ -30,6 +30,8 @@ const PdfToolsPanel: React.FC<PdfToolsPanelProps> = ({
   isToolbarExpanded,
   onToolbarExpandedChange,
   onClose,
+  effectiveFontSize,
+  onFontSizeChange,
 }) => {
   return (
     <div className="flex flex-col gap-2 bg-gray-800/90 backdrop-blur-sm border border-gray-700/50 rounded-lg p-2">
@@ -176,6 +178,17 @@ const PdfToolsPanel: React.FC<PdfToolsPanelProps> = ({
                     />
                   ))}
                 </div>
+              </div>
+              <div className="border-t border-gray-700 pt-2">
+                <label className="text-xs text-gray-300 block mb-1">Font Size: {effectiveFontSize}px</label>
+                <input
+                  type="range"
+                  min="5"
+                  max="32"
+                  value={effectiveFontSize}
+                  onChange={(e) => onFontSizeChange(parseInt(e.target.value, 10))}
+                  className="w-full"
+                />
               </div>
             </>
           )}
