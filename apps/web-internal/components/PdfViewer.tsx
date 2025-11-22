@@ -177,7 +177,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
   // Annotation state
   const [tool, setTool] = useState<Tool>('pen');
-  const [strokeColor, setStrokeColor] = useState<string>('#3b82f6'); // blue-500
+  const [penStrokeColor, setPenStrokeColor] = useState<string>('#3b82f6'); // blue-500
+  const [arrowStrokeColor, setArrowStrokeColor] = useState<string>('#000000'); // black
   const [strokeWidth, setStrokeWidth] = useState<number>(2);
   const [textColor, setTextColor] = useState<string>('#000000');
   const [rectangleColor, setRectangleColor] = useState<string>('#ef4444');
@@ -249,6 +250,20 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
     setTool(newTool);
   }, []);
+
+  // Compute active stroke color based on current tool
+  const activeStrokeColor = useMemo(() => {
+    return tool === 'arrow' ? arrowStrokeColor : penStrokeColor;
+  }, [tool, penStrokeColor, arrowStrokeColor]);
+
+  // Handle stroke color change - update the appropriate color based on current tool
+  const handleStrokeColorChange = useCallback((color: string) => {
+    if (tool === 'arrow') {
+      setArrowStrokeColor(color);
+    } else {
+      setPenStrokeColor(color);
+    }
+  }, [tool]);
 
   // Refs for canvas overlays
   const canvasRefs = useRef<Record<number, HTMLCanvasElement>>({});
@@ -480,22 +495,23 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   const initBaseSize = useCallback((pageNumber: number) => {
     const canvas = canvasRefs.current[pageNumber];
     const wrapper = pageWrapperRefs.current[pageNumber];
-    if (canvas && wrapper && baseWidthRef.current) {
+    if (canvas && wrapper && baseWidthRef.current && containerWidth) {
       // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
-        // Capture base dimensions on first render
+        // Capture base dimensions on first render (at current scale)
         if (!basePageDimensionsRef.current[pageNumber]) {
+          // Store the base dimensions at scale=1 for consistent coordinate system
+          // wrapper.clientWidth is now containerWidth * scale, so divide by scale
+          const currentDisplayScale = containerWidth / baseWidthRef.current;
           basePageDimensionsRef.current[pageNumber] = {
-            width: wrapper.clientWidth,
-            height: wrapper.clientHeight,
+            width: wrapper.clientWidth / (scale * currentDisplayScale),
+            height: wrapper.clientHeight / (scale * currentDisplayScale),
           };
         }
 
-        const baseDims = basePageDimensionsRef.current[pageNumber];
-
-        // Set canvas to base dimensions (will be scaled via CSS transform)
-        canvas.width = baseDims.width;
-        canvas.height = baseDims.height;
+        // Set canvas to actual rendered dimensions (includes scale for high resolution)
+        canvas.width = wrapper.clientWidth;
+        canvas.height = wrapper.clientHeight;
 
         // Position canvas to fill wrapper (already positioned via CSS)
         canvas.style.position = 'absolute';
@@ -507,7 +523,24 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         redrawPage(pageNumber);
       });
     }
-  }, [redrawPage]);
+  }, [redrawPage, scale, containerWidth]);
+
+  // Update canvas size when scale changes
+  useEffect(() => {
+    Object.keys(canvasRefs.current).forEach((pageNumStr) => {
+      const pageNum = parseInt(pageNumStr, 10);
+      const canvas = canvasRefs.current[pageNum];
+      const wrapper = pageWrapperRefs.current[pageNum];
+      const baseDims = basePageDimensionsRef.current[pageNum];
+      
+      if (canvas && wrapper && baseDims) {
+        // Update canvas resolution to match new scale
+        canvas.width = wrapper.clientWidth;
+        canvas.height = wrapper.clientHeight;
+        redrawPage(pageNum);
+      }
+    });
+  }, [scale, redrawPage]);
 
   // Update redraw when annotations change
   useEffect(() => {
@@ -755,7 +788,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       // Draw current stroke
       if (newStroke.length >= 2) {
         ctx.beginPath();
-        ctx.strokeStyle = strokeColor;
+        ctx.strokeStyle = penStrokeColor;
         ctx.lineWidth = strokeWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -809,7 +842,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const annotation: PdfAnnotation = {
         kind: 'stroke',
         points: currentStroke,
-        color: strokeColor,
+        color: penStrokeColor,
         width: strokeWidth,
       };
 
@@ -903,7 +936,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         startYNorm: anchor.yNorm,
         endXNorm: arrowDraft.headX, // Arrow tip at head (pointer-down point)
         endYNorm: arrowDraft.headY,
-        color: strokeColor,
+        color: arrowStrokeColor,
         width: strokeWidth,
         xNorm: textX,
         yNorm: textY,
@@ -1548,8 +1581,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       onToolbarHandlersReady({
         tool,
         onToolChange: handleToolChange,
-        strokeColor,
-        onStrokeColorChange: setStrokeColor,
+        strokeColor: activeStrokeColor,
+        onStrokeColorChange: handleStrokeColorChange,
         strokeWidth,
         onStrokeWidthChange: setStrokeWidth,
         textColor,
@@ -1576,7 +1609,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   }, [
     tool,
     handleToolChange,
-    strokeColor,
+    activeStrokeColor,
+    handleStrokeColorChange,
     strokeWidth,
     textColor,
     handleTextColorClick,
@@ -1603,11 +1637,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   // Compute display scale for CSS transform (without changing Page props)
   const displayScale = useMemo(() => {
     if (!baseWidthRef.current) return 1;
-    return (containerWidth / baseWidthRef.current) * scale;
-  }, [containerWidth, scale]);
+    return (containerWidth / baseWidthRef.current);
+  }, [containerWidth]);
 
-  // Use base width for Page rendering (frozen until PDF URL changes)
-  const pageWidth = baseWidthRef.current || 800;
+  // Use container width multiplied by scale for Page rendering
+  const pageWidth = containerWidth * scale;
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col m-2 relative min-h-0">
@@ -1699,8 +1733,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                     {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#000000'].map((color) => (
                       <button
                         key={color}
-                        onClick={() => setStrokeColor(color)}
-                        className={`w-6 h-6 rounded border-2 ${strokeColor === color ? 'border-white' : 'border-gray-600'}`}
+                        onClick={() => handleStrokeColorChange(color)}
+                        className={`w-6 h-6 rounded border-2 ${penStrokeColor === color ? 'border-white' : 'border-gray-600'}`}
                         style={{ backgroundColor: color }}
                         aria-label={`Select color ${color}`}
                       />
@@ -1747,8 +1781,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                         {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#000000'].map((color) => (
                           <button
                             key={color}
-                            onClick={() => setStrokeColor(color)}
-                            className={`w-6 h-6 rounded border-2 ${strokeColor === color ? 'border-white' : 'border-gray-600'}`}
+                            onClick={() => handleStrokeColorChange(color)}
+                            className={`w-6 h-6 rounded border-2 ${arrowStrokeColor === color ? 'border-white' : 'border-gray-600'}`}
                             style={{ backgroundColor: color }}
                             aria-label={`Select arrow color ${color}`}
                           />
@@ -1867,10 +1901,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
             {Array.from(new Array(numPages), (el, index) => {
               const pageNum = index + 1;
               const baseDims = basePageDimensionsRef.current[pageNum];
-              const baseW = baseDims?.width || pageWidth;
-              const baseH = baseDims?.height || (pageWidth * 1.414); // Approximate A4 ratio if not set
-              const scaledW = baseW * displayScale;
-              const scaledH = baseH * displayScale;
+              // Calculate dimensions based on the base width and scale
+              const baseW = baseDims?.width || (baseWidthRef.current || 800);
+              const baseH = baseDims?.height || (baseW * 1.414); // Approximate A4 ratio if not set
+              const scaledW = baseW * displayScale * scale;
+              const scaledH = baseH * displayScale * scale;
 
               return (
                 <div
@@ -1882,15 +1917,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                   onMouseEnter={() => setCurrentPage(pageNum)}
                   style={{
                     width: '100%',
-                    height: scaledH,
+                    minWidth: scaledW,
                   }}
                 >
                   <div
                     style={{
-                      transform: `scale(${displayScale})`,
-                      transformOrigin: 'top center',
-                      width: baseW,
-                      height: baseH,
+                      width: scaledW,
+                      height: scaledH,
                     }}
                   >
                     <div
@@ -1939,10 +1972,10 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                         const baseW = baseDims.width;
                         const baseH = baseDims.height;
 
-                        const w = textAnnotation.wNorm * baseW;
-                        const h = textAnnotation.hNorm * baseH;
-                        const x = textAnnotation.xNorm * baseW;
-                        const y = textAnnotation.yNorm * baseH;
+                        const w = textAnnotation.wNorm * baseW * displayScale;
+                        const h = textAnnotation.hNorm * baseH * displayScale;
+                        const x = textAnnotation.xNorm * baseW * displayScale;
+                        const y = textAnnotation.yNorm * baseH * displayScale;
 
                         return (
                           <Rnd
@@ -1960,16 +1993,16 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                               bottomLeft: true,
                               topLeft: true,
                             } : false}
-                            size={{ width: w, height: h }}
-                            position={{ x, y }}
-                            minWidth={baseW * 0.02}
-                            minHeight={baseH * 0.02}
-                            scale={displayScale}
+                            size={{ width: w * scale, height: h * scale }}
+                            position={{ x: x * scale, y: y * scale }}
+                            minWidth={baseW * displayScale * scale * 0.02}
+                            minHeight={baseH * displayScale * scale * 0.02}
+                            scale={1}
                             onResizeStop={(e, dir, ref, delta, pos) => {
                               if (!isAnnotationEnabled) return;
-                              const newWidth = ref.offsetWidth;
-                              const newHeight = ref.offsetHeight;
-                              handleTextResizeStop(textAnnotation.id, pageNum, newWidth, newHeight, pos.x, pos.y);
+                              const newWidth = ref.offsetWidth / (scale * displayScale);
+                              const newHeight = ref.offsetHeight / (scale * displayScale);
+                              handleTextResizeStop(textAnnotation.id, pageNum, newWidth, newHeight, pos.x / (scale * displayScale), pos.y / (scale * displayScale));
                             }}
                           >
                             {isAnnotationEnabled && (
