@@ -1,0 +1,12 @@
+import Foundation
+
+// Hello World Test Program
+print("Hello, World!")
+
+// Additional test output
+let greeting = "Welcome to Swift!"
+print(greeting)
+
+// Current date and time
+let now = Date()
+print("Current time: \(now)")

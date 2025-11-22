@@ -69,6 +69,7 @@ export interface SerializableFile {
   size: number;
   content?: string; // base64 data URL (legacy)
   storageId?: string; // IndexedDB ID
+  path?: string; // Reconstruct folder structure
 }
 
 export interface AgentState {
@@ -76,6 +77,20 @@ export interface AgentState {
     uploadedFiles: SerializableFile[];
 }
 
+// --- File System Types ---
+
+export type NodeType = 'file' | 'folder';
+
+export interface FileSystemNode {
+  id: string;
+  name: string;
+  type: NodeType;
+  path: string; // Full path including name, e.g., "folder/subfolder/file.pdf"
+  file?: File; // Only for files
+  children?: FileSystemNode[]; // Only for folders
+  parentId?: string;
+  expanded?: boolean; // UI state
+}
 
 export interface Project {
   id: string;

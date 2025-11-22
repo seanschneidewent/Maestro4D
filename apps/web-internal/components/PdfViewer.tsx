@@ -449,7 +449,17 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         const h = annotation.hNorm * canvas.height;
 
         ctx.beginPath();
-        ctx.strokeStyle = annotation.color;
+        
+        // Create radial gradient for stroke
+        const centerX = x + w / 2;
+        const centerY = y + h / 2;
+        const radius = Math.sqrt(w * w + h * h) / 2;
+        
+        const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+        gradient.addColorStop(0, '#3b82f6'); // Blue
+        gradient.addColorStop(1, '#06b6d4'); // Cyan
+        
+        ctx.strokeStyle = gradient;
         ctx.lineWidth = annotation.width;
         ctx.globalCompositeOperation = 'source-over';
         ctx.strokeRect(x, y, w, h);
@@ -1934,17 +1944,32 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
                       )}
                       {/* Rectangle draft preview */}
                       {rectangleDraft && pageNum === currentPage && (
-                        <div
+                        <svg
                           className="absolute pointer-events-none"
                           style={{
-                            left: `${Math.min(rectangleDraft.startX, rectangleDraft.endX) * 100}%`,
-                            top: `${Math.min(rectangleDraft.startY, rectangleDraft.endY) * 100}%`,
-                            width: `${Math.abs(rectangleDraft.endX - rectangleDraft.startX) * 100}%`,
-                            height: `${Math.abs(rectangleDraft.endY - rectangleDraft.startY) * 100}%`,
-                            border: `2px dashed ${rectangleColor}`,
-                            backgroundColor: 'transparent',
+                            left: 0,
+                            top: 0,
+                            width: '100%',
+                            height: '100%',
                           }}
-                        />
+                        >
+                          <defs>
+                            <radialGradient id="rect-gradient-preview">
+                                <stop offset="0%" stopColor="#3b82f6" />
+                                <stop offset="100%" stopColor="#06b6d4" />
+                            </radialGradient>
+                          </defs>
+                          <rect
+                            x={`${Math.min(rectangleDraft.startX, rectangleDraft.endX) * 100}%`}
+                            y={`${Math.min(rectangleDraft.startY, rectangleDraft.endY) * 100}%`}
+                            width={`${Math.abs(rectangleDraft.endX - rectangleDraft.startX) * 100}%`}
+                            height={`${Math.abs(rectangleDraft.endY - rectangleDraft.startY) * 100}%`}
+                            stroke="url(#rect-gradient-preview)"
+                            strokeWidth="2"
+                            strokeDasharray="5,5"
+                            fill="none"
+                          />
+                        </svg>
                       )}
                     </div>
                   </div>

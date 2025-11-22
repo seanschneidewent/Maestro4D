@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { ProjectSummary, Severity, Insight, InsightStatus, InsightType } from '../types';
-import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon } from './Icons';
+import { ProjectSummary, Severity, Insight, InsightStatus, InsightType, FileSystemNode } from '../types';
+import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon, FolderIcon } from './Icons';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { analyzeDeviationReport } from '../utils/gemini';
+import FolderTreeView from './FolderTreeView';
 
 type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
 
@@ -15,12 +16,33 @@ interface ReferencePanelProps {
   onAddInsights?: (insights: Insight[]) => void;
   isListDataActive?: boolean;
   onToggleListData?: () => void;
+  // Updated props for folder structure
+  fileSystemTree?: FileSystemNode[];
+  selectedNodeId?: string | null;
+  onSelectNode?: (node: FileSystemNode) => void;
+  onToggleExpand?: (node: FileSystemNode) => void;
+  onRenameNode?: (node: FileSystemNode, newName: string) => void;
+  onDeleteNode?: (node: FileSystemNode) => void;
+  onMoveNode?: (nodeId: string, targetParentId: string | undefined) => void;
+  onOpenFile?: (node: FileSystemNode) => void;
+  onCreateFolder?: (parentId?: string) => void;
+  
+  // Legacy props (keeping for compatibility during transition if needed, but mainly replaced)
   centerViewerFiles?: Array<{ name: string; url: string; file: File }>;
   selectedFileIndex?: number;
   onSelectFile?: (index: number) => void;
   onDeleteFile?: (index: number) => void;
+  
   onAddFile?: (files: File[]) => void;
   fileInputRef?: React.RefObject<HTMLInputElement>;
+}
+
+// Augment HTMLInputElement attributes to support directory upload
+declare module 'react' {
+  interface InputHTMLAttributes<T> extends HTMLAttributes<T> {
+    directory?: string;
+    webkitdirectory?: string;
+  }
 }
 
 const ReferencePanel: React.FC<ReferencePanelProps> = ({ 
@@ -31,6 +53,15 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   onAddInsights,
   isListDataActive = false,
   onToggleListData,
+  fileSystemTree = [],
+  selectedNodeId = null,
+  onSelectNode,
+  onToggleExpand,
+  onRenameNode,
+  onDeleteNode,
+  onMoveNode,
+  onOpenFile,
+  onCreateFolder,
   centerViewerFiles = [],
   selectedFileIndex = 0,
   onSelectFile,
@@ -57,6 +88,9 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   const progressFileInputRef = useRef<HTMLInputElement>(null);
   const deviationFileInputRef = useRef<HTMLInputElement>(null);
   const clashFileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Separate ref for folder input
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // Upload handlers
   const handleProgressUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,6 +129,16 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
       setReportFiles(prev => ({ ...prev, clash: file }));
     }
     e.target.value = '';
+  };
+  
+  const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0 && onAddFile) {
+      const files = Array.from(e.target.files);
+      onAddFile(files);
+    }
+    if (folderInputRef.current) {
+      folderInputRef.current.value = '';
+    }
   };
 
   // Delete handler for allData files
@@ -360,66 +404,56 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-2 space-y-5 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto pr-2 space-y-5 custom-scrollbar flex flex-col">
         {isListDataActive ? (
-          <div className="space-y-3">
-            {centerViewerFiles.length === 0 ? (
-              <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-10 rounded-xl border border-white/10 text-center group hover:border-cyan-500/30 transition-all duration-300">
-                <DocumentIcon className="mx-auto h-16 w-16 text-gray-600 mb-6 group-hover:text-cyan-500/50 transition-colors" />
-                <p className="text-gray-300 mb-2 font-medium">No files uploaded</p>
-                <p className="text-sm text-gray-500">Click "Add Files" to upload files to the viewer</p>
-              </div>
-            ) : (
-              centerViewerFiles.map((file, index) => (
-                <button
-                  key={index}
-                  onClick={() => onSelectFile?.(index)}
-                  className={`w-full px-5 py-4 text-left rounded-xl transition-all duration-300 flex items-center justify-between group relative overflow-hidden ${
-                    selectedFileIndex === index
-                      ? 'bg-gradient-to-r from-cyan-600/20 to-blue-600/20 border border-cyan-500/50 text-white shadow-[0_0_20px_rgba(6,182,212,0.1)]'
-                      : 'bg-gray-800/30 border border-white/5 text-gray-400 hover:bg-gray-800/50 hover:border-cyan-500/30 hover:text-white'
-                  }`}
-                  aria-label={`Select ${file.name}`}
-                  aria-pressed={selectedFileIndex === index}
-                >
-                  <span className="flex-1 truncate pr-4 text-sm font-semibold z-10">{file.name}</span>
-                  {onDeleteFile && (
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteFile(index);
-                      }}
-                      className={`ml-2 p-1.5 rounded-lg transition-colors focus:outline-none z-10 ${
-                        selectedFileIndex === index
-                          ? 'hover:bg-red-500/20 text-red-300'
-                          : 'hover:bg-red-500/20 hover:text-red-400 text-gray-500'
-                      }`}
-                      aria-label={`Delete ${file.name}`}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          onDeleteFile(index);
-                        }
-                      }}
+          <div className="flex flex-col h-full">
+            {/* Hidden folder input */}
+            <input
+               ref={folderInputRef}
+               type="file"
+               webkitdirectory=""
+               directory=""
+               className="hidden"
+               onChange={handleFolderUpload}
+               multiple
+             />
+             
+            {/* Folder Tree View */}
+            <div className="flex-1">
+                <FolderTreeView 
+                    nodes={fileSystemTree}
+                    selectedNodeId={selectedNodeId || null}
+                    onSelectNode={onSelectNode || (() => {})}
+                    onToggleExpand={onToggleExpand || (() => {})}
+                    onRenameNode={onRenameNode || (() => {})}
+                    onDeleteNode={onDeleteNode || (() => {})}
+                    onMoveNode={onMoveNode || (() => {})}
+                    onOpenFile={onOpenFile || (() => {})}
+                    onCreateFolder={onCreateFolder || (() => {})}
+                />
+            </div>
+            
+            {/* Upload Buttons Area */}
+            {onAddFile && (
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                        onClick={() => fileInputRef?.current?.click()}
+                        className="px-4 py-3 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-cyan-900/20 hover:to-blue-900/20 text-gray-300 hover:text-cyan-400 rounded-xl border border-dashed border-gray-700 hover:border-cyan-500/50 transition-all duration-300 flex items-center justify-center gap-2 text-sm font-bold shadow-lg hover:shadow-cyan-900/10 group"
+                        aria-label="Add Files"
                     >
-                      <CloseIcon className="h-4 w-4" />
-                    </span>
-                  )}
-                </button>
-              ))
-            )}
-            {onAddFile && fileInputRef && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full px-4 py-3.5 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-cyan-900/20 hover:to-blue-900/20 text-gray-300 hover:text-cyan-400 rounded-xl border border-dashed border-gray-700 hover:border-cyan-500/50 transition-all duration-300 flex items-center justify-center gap-3 text-sm font-bold shadow-lg hover:shadow-cyan-900/10 group"
-                aria-label="Add Files"
-              >
-                <PlusIcon className="h-5 w-5 group-hover:scale-110 transition-transform duration-300" />
-                <span>Add Files</span>
-              </button>
+                        <PlusIcon className="h-4 w-4 group-hover:scale-110 transition-transform duration-300" />
+                        <span>Add Files</span>
+                    </button>
+                    
+                    <button
+                        onClick={() => folderInputRef.current?.click()}
+                        className="px-4 py-3 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-purple-900/20 hover:to-pink-900/20 text-gray-300 hover:text-purple-400 rounded-xl border border-dashed border-gray-700 hover:border-purple-500/50 transition-all duration-300 flex items-center justify-center gap-2 text-sm font-bold shadow-lg hover:shadow-purple-900/10 group"
+                        aria-label="Add Folder"
+                    >
+                        <FolderIcon className="h-4 w-4 group-hover:scale-110 transition-transform duration-300" />
+                        <span>Add Folder</span>
+                    </button>
+                </div>
             )}
           </div>
         ) : (
