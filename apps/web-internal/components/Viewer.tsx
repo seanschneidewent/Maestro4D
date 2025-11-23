@@ -32,8 +32,6 @@ const Viewer: React.FC<ViewerProps> = ({
   
   // Editing state
   const [isEditing, setIsEditing] = useState(false);
-  const [startPoint, setStartPoint] = useState<ThreeDPoint | null>(null);
-  const [currentPoint, setCurrentPoint] = useState<ThreeDPoint | null>(null);
   const [showInsightModal, setShowInsightModal] = useState(false);
   const [tempAnnotation, setTempAnnotation] = useState<Partial<ThreeDAnnotation> | null>(null);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
@@ -50,8 +48,6 @@ const Viewer: React.FC<ViewerProps> = ({
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
   const annotationsGroupRef = useRef<THREE.Group | null>(null);
-  const previewLineRef = useRef<THREE.Line | null>(null);
-  const startPointMarkerRef = useRef<THREE.Mesh | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
 
@@ -90,76 +86,44 @@ const Viewer: React.FC<ViewerProps> = ({
         const isMarkedForDeletion = annotationsToDelete.includes(ann.id);
         const color = isMarkedForDeletion ? '#ef4444' : (isSelected ? '#ffff00' : ann.color); // Red if deleting, Yellow if selected
 
-        const line = createLine(ann.start, ann.end, color);
-        line.userData = { id: ann.id, type: 'annotation' };
-        annotationsGroupRef.current?.add(line);
-        
-        // Add markers at ends
-        const markerGeo = new THREE.SphereGeometry(0.025, 16, 16); // Smaller points (0.05 -> 0.025)
-        const markerMat = new THREE.MeshBasicMaterial({ color: color });
-        
-        const startMarker = new THREE.Mesh(markerGeo, markerMat);
-        startMarker.position.set(ann.start.x, ann.start.y, ann.start.z);
-        startMarker.userData = { id: ann.id, type: 'annotation' };
-        
-        const endMarker = new THREE.Mesh(markerGeo, markerMat);
-        endMarker.position.set(ann.end.x, ann.end.y, ann.end.z);
-        endMarker.userData = { id: ann.id, type: 'annotation' };
+        // Check if it's a point annotation (start === end)
+        const isPointAnnotation = ann.start.x === ann.end.x && ann.start.y === ann.end.y && ann.start.z === ann.end.z;
 
-        annotationsGroupRef.current?.add(startMarker);
-        annotationsGroupRef.current?.add(endMarker);
+        if (isPointAnnotation) {
+            // Render single larger marker for point annotation
+            const markerGeo = new THREE.SphereGeometry(0.05, 32, 32); // Larger, smoother sphere
+            const markerMat = new THREE.MeshBasicMaterial({ color: color });
+            
+            const marker = new THREE.Mesh(markerGeo, markerMat);
+            marker.position.set(ann.start.x, ann.start.y, ann.start.z);
+            marker.userData = { id: ann.id, type: 'annotation' };
+            
+            annotationsGroupRef.current?.add(marker);
+        } else {
+            // Render line annotation with line and two markers (legacy support)
+            const line = createLine(ann.start, ann.end, color);
+            line.userData = { id: ann.id, type: 'annotation' };
+            annotationsGroupRef.current?.add(line);
+            
+            // Add markers at ends
+            const markerGeo = new THREE.SphereGeometry(0.025, 16, 16);
+            const markerMat = new THREE.MeshBasicMaterial({ color: color });
+            
+            const startMarker = new THREE.Mesh(markerGeo, markerMat);
+            startMarker.position.set(ann.start.x, ann.start.y, ann.start.z);
+            startMarker.userData = { id: ann.id, type: 'annotation' };
+            
+            const endMarker = new THREE.Mesh(markerGeo, markerMat);
+            endMarker.position.set(ann.end.x, ann.end.y, ann.end.z);
+            endMarker.userData = { id: ann.id, type: 'annotation' };
+
+            annotationsGroupRef.current?.add(startMarker);
+            annotationsGroupRef.current?.add(endMarker);
+        }
     });
   }, [annotations, modelLoaded, selectedAnnotationId, annotationsToDelete]);
 
-  // Render preview line
-  useEffect(() => {
-    if (!sceneRef.current || !isEditing) return;
-
-    // Manage start point marker
-    if (startPoint) {
-        if (!startPointMarkerRef.current) {
-            const geo = new THREE.SphereGeometry(0.04, 16, 16); // Slightly larger for editing
-            const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-            const mesh = new THREE.Mesh(geo, mat);
-            sceneRef.current.add(mesh);
-            startPointMarkerRef.current = mesh;
-        }
-        startPointMarkerRef.current.position.set(startPoint.x, startPoint.y, startPoint.z);
-    } else {
-        if (startPointMarkerRef.current) {
-            sceneRef.current.remove(startPointMarkerRef.current);
-            startPointMarkerRef.current.geometry.dispose();
-            (startPointMarkerRef.current.material as THREE.Material).dispose();
-            startPointMarkerRef.current = null;
-        }
-    }
-
-    // Manage preview line
-    if (startPoint && currentPoint) {
-        if (previewLineRef.current) {
-            sceneRef.current.remove(previewLineRef.current);
-            previewLineRef.current.geometry.dispose();
-            (previewLineRef.current.material as THREE.Material).dispose();
-        }
-        const line = createLine(startPoint, currentPoint, '#00ff00');
-        sceneRef.current.add(line);
-        previewLineRef.current = line;
-    } else {
-         if (previewLineRef.current) {
-            sceneRef.current.remove(previewLineRef.current);
-            previewLineRef.current.geometry.dispose();
-            (previewLineRef.current.material as THREE.Material).dispose();
-            previewLineRef.current = null;
-        }
-    }
-    
-    // Cleanup on effect re-run or unmount
-    return () => {
-        // We don't dispose here strictly because we want persistence during state updates, 
-        // but standard React cleanup usually implies removing side effects.
-        // We'll rely on the next render to update/re-create or the final cleanup.
-    };
-  }, [isEditing, startPoint, currentPoint]);
+  // Preview line logic removed - no longer needed for single-point annotations
 
   // Handle click on canvas
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -212,53 +176,27 @@ const Viewer: React.FC<ViewerProps> = ({
     // 2. If editing, check for model clicks
     const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
 
-    if (intersects.length > 0 && !isDeleteMode) {
+    if (intersects.length > 0 && !isDeleteMode && isEditing) {
         const point = intersects[0].point;
         const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
 
-        if (!startPoint) {
-            setStartPoint(clickedPoint);
-            setCurrentPoint(clickedPoint); // Init preview
-            // Also deselect any annotation when starting to draw
-            setSelectedAnnotationId(null);
-            onAnnotationSelect?.(null);
-        } else {
-            // Finish line
-            const newAnnotation: Partial<ThreeDAnnotation> = {
-                id: Math.random().toString(36).substring(2, 10),
-                start: startPoint,
-                end: clickedPoint,
-                color: '#ff0000' // Default color
-            };
-            setTempAnnotation(newAnnotation);
-            setShowInsightModal(true);
-            setStartPoint(null);
-            setCurrentPoint(null);
-        }
+        // Create point annotation immediately (start === end)
+        const newAnnotation: Partial<ThreeDAnnotation> = {
+            id: Math.random().toString(36).substring(2, 10),
+            start: clickedPoint,
+            end: clickedPoint, // Same point for point annotation
+            color: '#ff0000' // Default color
+        };
+        setTempAnnotation(newAnnotation);
+        setShowInsightModal(true);
+        
+        // Deselect any annotation when creating new one
+        setSelectedAnnotationId(null);
+        onAnnotationSelect?.(null);
     }
   };
 
-  const handleCanvasMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!isEditing || !startPoint || !modelRef.current || !cameraRef.current) return;
-
-      const rect = mountRef.current?.getBoundingClientRect();
-      if (!rect) return;
-
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      mouseRef.current.set(x, y);
-      raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-      
-      // Intersect with model for precise endpoint
-      const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
-      if (intersects.length > 0) {
-           const point = intersects[0].point;
-           setCurrentPoint({ x: point.x, y: point.y, z: point.z });
-      } else {
-          // Optional: Project onto a plane if off-model? For now, stick to model.
-      }
-  };
+  // Mouse move handler removed - no longer needed for single-point annotations
 
   const handleInsightSelect = (insightId: string) => {
       if (tempAnnotation && onAnnotationAdd) {
@@ -474,7 +412,6 @@ const Viewer: React.FC<ViewerProps> = ({
         ref={mountRef} 
         className={`w-full h-full rounded-lg ${isEditing ? 'cursor-crosshair' : 'cursor-default'}`}
         onClick={handleCanvasClick}
-        onMouseMove={handleCanvasMouseMove}
       />
       
       {/* This input is always in the DOM, so it can be triggered from either button */}
@@ -507,18 +444,16 @@ const Viewer: React.FC<ViewerProps> = ({
                  </button>
 
                  <button
-                    onClick={() => {
-                        if (isDeleteMode) {
-                            setIsDeleteMode(false);
-                            setAnnotationsToDelete([]);
-                        }
-                        setIsEditing(!isEditing);
-                        setStartPoint(null);
-                        setCurrentPoint(null);
-                        // Deselect when toggling edit mode
-                        setSelectedAnnotationId(null);
-                        onAnnotationSelect?.(null);
-                    }}
+                   onClick={() => {
+                       if (isDeleteMode) {
+                           setIsDeleteMode(false);
+                           setAnnotationsToDelete([]);
+                       }
+                       setIsEditing(!isEditing);
+                       // Deselect when toggling edit mode
+                       setSelectedAnnotationId(null);
+                       onAnnotationSelect?.(null);
+                   }}
                     className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto flex items-center gap-2 ${
                         isEditing ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
                     }`}

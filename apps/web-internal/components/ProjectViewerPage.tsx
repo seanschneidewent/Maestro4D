@@ -2146,12 +2146,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 </div>
             </header>
             <main className="flex-1 flex overflow-hidden min-h-0">
-                {/* Insights Panel (Left) */}
+                {/* Reference Panel (Left) */}
                 <div className={`relative flex-shrink-0 transition-all duration-300 ease-in-out ${isInsightsPanelCollapsed ? 'w-12' : 'w-[24rem]'}`}>
                     <button
                         onClick={toggleInsightsPanel}
                         className="absolute top-1/2 -translate-y-1/2 -right-3 z-20 w-6 h-6 bg-gray-700 hover:bg-cyan-600 text-white rounded-full flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500"
-                        aria-label={isInsightsPanelCollapsed ? 'Expand insights panel' : 'Collapse insights panel'}
+                        aria-label={isInsightsPanelCollapsed ? 'Expand reference panel' : 'Collapse reference panel'}
                         title="Toggle panel (Ctrl+[)"
                     >
                         {isInsightsPanelCollapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronLeftIcon className="h-4 w-4" />}
@@ -2163,22 +2163,51 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onDoubleClick={toggleInsightsPanel}
                         >
                             <h2 className="[writing-mode:vertical-rl] rotate-180 text-sm font-bold tracking-wider text-gray-400 whitespace-nowrap">
-                                Insights Panel
+                                Reference Panel
                             </h2>
                         </div>
                     ) : (
                         <div className="w-full h-full flex flex-col border-r border-gray-800 overflow-hidden">
-                            <InsightsList
-                                insights={currentScan?.insights || []}
-                                onUploadInsights={handleUploadInsights}
-                                onInsightStatusChange={handleInsightStatusChange}
-                                onAddNote={handleAddNote}
-                                onReassignTrade={handleReassignTrade}
-                                onOpenInsightChat={setActiveInsightChatId}
-                                onCloseInsightChat={() => setActiveInsightChatId(null)}
-                                activeInsightChatId={activeInsightChatId}
-                                highlightedInsightId={highlightedInsightId}
-                            />
+                            {activeInsightChatId ? (() => {
+                                const activeInsight = currentScan?.insights.find(i => i.id === activeInsightChatId);
+                                return activeInsight ? (
+                                    <InsightChatPanel
+                                        insight={activeInsight}
+                                        onBack={() => setActiveInsightChatId(null)}
+                                        onStatusChange={handleInsightStatusChange}
+                                        onReassignTrade={handleReassignTrade}
+                                    />
+                                ) : null;
+                            })() : (
+                                <ReferencePanel
+                                    summary={projectSummary}
+                                    insights={currentScan?.insights || []}
+                                    progress={project.progress}
+                                    onViewReport={handleViewReport}
+                                    onAddInsights={handleAddInsights}
+                                    isListDataActive={isListDataActive}
+                                    onToggleListData={handleToggleListData}
+
+                                    // Legacy Props
+                                    centerViewerFiles={currentScanViewerState.centerViewerFiles}
+                                    selectedFileIndex={currentScanViewerState.selectedFileIndex}
+                                    onSelectFile={(index) => updateCurrentScanViewerState(state => ({ ...state, selectedFileIndex: index }))}
+                                    onDeleteFile={handleCenterViewerDeleteFile}
+                                    onAddFile={handleCenterViewerAddFile}
+                                    fileInputRef={centerViewerFileInputRef}
+
+                                    // New Folder Tree Props
+                                    fileSystemTree={currentScanViewerState.fileSystemTree}
+                                    selectedNodeId={currentScanViewerState.selectedNodeId}
+                                    onSelectNode={handleSelectNode}
+                                    onToggleExpand={handleToggleExpand}
+                                    onRenameNode={handleRenameNode}
+                                    onDeleteNode={handleDeleteNode}
+                                    onMoveNode={handleMoveNode}
+                                    onOpenFile={handleOpenFile}
+                                    onCreateFolder={handleCreateFolder}
+                                />
+                            )}
                         </div>
                     )}
                 </div>
@@ -2246,12 +2275,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     )}
                 </div>
 
-                {/* Metrics Panel (Right) */}
+                {/* Insights Panel (Right) */}
                 <div className={`relative flex-shrink-0 transition-all duration-300 ease-in-out ${isMetricsPanelCollapsed ? 'w-12' : 'w-[24rem]'}`}>
                     <button
                         onClick={toggleMetricsPanel}
                         className="absolute top-1/2 -translate-y-1/2 -left-3 z-20 w-6 h-6 bg-gray-700 hover:bg-cyan-600 text-white rounded-full flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500"
-                        aria-label={isMetricsPanelCollapsed ? 'Expand metrics panel' : 'Collapse metrics panel'}
+                        aria-label={isMetricsPanelCollapsed ? 'Expand insights panel' : 'Collapse insights panel'}
                         title="Toggle panel (Ctrl+])"
                     >
                         {isMetricsPanelCollapsed ? <ChevronLeftIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
@@ -2263,51 +2292,22 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onDoubleClick={toggleMetricsPanel}
                         >
                             <h2 className="[writing-mode:vertical-rl] text-sm font-bold tracking-wider text-gray-400 whitespace-nowrap">
-                                Reference Panel
+                                Insights Panel
                             </h2>
                         </div>
                     ) : (
                         <div className="w-full h-full flex flex-col border-l border-gray-800 overflow-hidden">
-                            {activeInsightChatId ? (() => {
-                                const activeInsight = currentScan?.insights.find(i => i.id === activeInsightChatId);
-                                return activeInsight ? (
-                                    <InsightChatPanel
-                                        insight={activeInsight}
-                                        onBack={() => setActiveInsightChatId(null)}
-                                        onStatusChange={handleInsightStatusChange}
-                                        onReassignTrade={handleReassignTrade}
-                                    />
-                                ) : null;
-                            })() : (
-                                <ReferencePanel
-                                    summary={projectSummary}
-                                    insights={currentScan?.insights || []}
-                                    progress={project.progress}
-                                    onViewReport={handleViewReport}
-                                    onAddInsights={handleAddInsights}
-                                    isListDataActive={isListDataActive}
-                                    onToggleListData={handleToggleListData}
-
-                                    // Legacy Props
-                                    centerViewerFiles={currentScanViewerState.centerViewerFiles}
-                                    selectedFileIndex={currentScanViewerState.selectedFileIndex}
-                                    onSelectFile={(index) => updateCurrentScanViewerState(state => ({ ...state, selectedFileIndex: index }))}
-                                    onDeleteFile={handleCenterViewerDeleteFile}
-                                    onAddFile={handleCenterViewerAddFile}
-                                    fileInputRef={centerViewerFileInputRef}
-
-                                    // New Folder Tree Props
-                                    fileSystemTree={currentScanViewerState.fileSystemTree}
-                                    selectedNodeId={currentScanViewerState.selectedNodeId}
-                                    onSelectNode={handleSelectNode}
-                                    onToggleExpand={handleToggleExpand}
-                                    onRenameNode={handleRenameNode}
-                                    onDeleteNode={handleDeleteNode}
-                                    onMoveNode={handleMoveNode}
-                                    onOpenFile={handleOpenFile}
-                                    onCreateFolder={handleCreateFolder}
-                                />
-                            )}
+                            <InsightsList
+                                insights={currentScan?.insights || []}
+                                onUploadInsights={handleUploadInsights}
+                                onInsightStatusChange={handleInsightStatusChange}
+                                onAddNote={handleAddNote}
+                                onReassignTrade={handleReassignTrade}
+                                onOpenInsightChat={setActiveInsightChatId}
+                                onCloseInsightChat={() => setActiveInsightChatId(null)}
+                                activeInsightChatId={activeInsightChatId}
+                                highlightedInsightId={highlightedInsightId}
+                            />
                         </div>
                     )}
                 </div>
