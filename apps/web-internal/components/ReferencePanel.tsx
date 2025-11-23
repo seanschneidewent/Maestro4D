@@ -26,6 +26,12 @@ interface ReferencePanelProps {
   onMoveNode?: (nodeId: string, targetParentId: string | undefined) => void;
   onOpenFile?: (node: FileSystemNode) => void;
   onCreateFolder?: (parentId?: string) => void;
+  // New upload props
+  onUploadProjectMaster?: (files: File[]) => void;
+  onUploadModel?: (files: File[]) => void;
+  onUploadDeviation?: (file: File) => void;
+  onUploadClash?: (file: File) => void;
+  onUploadProgress?: (file: File) => void;
   
   // Legacy props (keeping for compatibility during transition if needed, but mainly replaced)
   centerViewerFiles?: Array<{ name: string; url: string; file: File }>;
@@ -62,6 +68,11 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   onMoveNode,
   onOpenFile,
   onCreateFolder,
+  onUploadProjectMaster,
+  onUploadModel,
+  onUploadDeviation,
+  onUploadClash,
+  onUploadProgress,
   centerViewerFiles = [],
   selectedFileIndex = 0,
   onSelectFile,
@@ -430,31 +441,13 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                     onMoveNode={onMoveNode || (() => {})}
                     onOpenFile={onOpenFile || (() => {})}
                     onCreateFolder={onCreateFolder || (() => {})}
+                    onUploadProjectMaster={onUploadProjectMaster}
+                    onUploadModel={onUploadModel}
+                    onUploadDeviation={onUploadDeviation}
+                    onUploadClash={onUploadClash}
+                    onUploadProgress={onUploadProgress}
                 />
             </div>
-            
-            {/* Upload Buttons Area */}
-            {onAddFile && (
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                        onClick={() => fileInputRef?.current?.click()}
-                        className="px-4 py-3 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-cyan-900/20 hover:to-blue-900/20 text-gray-300 hover:text-cyan-400 rounded-xl border border-dashed border-gray-700 hover:border-cyan-500/50 transition-all duration-300 flex items-center justify-center gap-2 text-sm font-bold shadow-lg hover:shadow-cyan-900/10 group"
-                        aria-label="Add Files"
-                    >
-                        <PlusIcon className="h-4 w-4 group-hover:scale-110 transition-transform duration-300" />
-                        <span>Add Files</span>
-                    </button>
-                    
-                    <button
-                        onClick={() => folderInputRef.current?.click()}
-                        className="px-4 py-3 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-purple-900/20 hover:to-pink-900/20 text-gray-300 hover:text-purple-400 rounded-xl border border-dashed border-gray-700 hover:border-purple-500/50 transition-all duration-300 flex items-center justify-center gap-2 text-sm font-bold shadow-lg hover:shadow-purple-900/10 group"
-                        aria-label="Add Folder"
-                    >
-                        <FolderIcon className="h-4 w-4 group-hover:scale-110 transition-transform duration-300" />
-                        <span>Add Folder</span>
-                    </button>
-                </div>
-            )}
           </div>
         ) : (
           <>

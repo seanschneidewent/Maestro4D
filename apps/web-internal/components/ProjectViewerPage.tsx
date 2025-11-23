@@ -448,6 +448,31 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isBimActive, setIsBimActive] = useState(false);
     const [isListDataActive, setIsListDataActive] = useState(false);
 
+    // Project Master State
+    const [projectMasterTree, setProjectMasterTree] = useState<FileSystemNode[]>([]);
+
+    // Initialize Project Master Tree
+    useEffect(() => {
+        // Check if we already have Project Master data in the first scan (persistence strategy)
+        // In a real app, this would be on the Project object directly
+        const existingMaster = project.scans?.[0]?.projectMasterFiles;
+        
+        if (existingMaster && existingMaster.length > 0) {
+            setProjectMasterTree(existingMaster);
+        } else {
+            // Initialize with empty Project Master folder
+            const root: FileSystemNode = {
+                id: 'project-master-root',
+                name: 'Project Master',
+                type: 'folder',
+                path: 'Project Master',
+                children: [],
+                expanded: true
+            };
+            setProjectMasterTree([root]);
+        }
+    }, [project.id]); // Only run on project load
+
     // Per-scan viewer state map - keyed by scan date
     const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
 
@@ -797,7 +822,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setSelectedScanDates([]);
 
         // Persist the deletion
-        onSaveProject(updatedScans, agentStates);
+        // We need to include projectMasterFiles in the save
+        const scansWithMaster = updatedScans.map(s => ({
+            ...s,
+            projectMasterFiles: projectMasterTree
+        }));
+        onSaveProject(scansWithMaster, agentStates);
     };
 
     const handleConfirmAddScan = (newDate: string) => {
@@ -814,6 +844,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             pdfUrl: undefined,
             pdfAnnotations: {},
             insights: [],
+            projectMasterFiles: projectMasterTree // Copy current master files to new scan data
         };
 
         // Add new scan and sort the array by date to maintain chronological order
@@ -1039,14 +1070,37 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleToggleExpand = useCallback((node: FileSystemNode) => {
         if (node.type !== 'folder') return;
 
+        // Check if node is in Project Master tree
+        if (findNodeById(projectMasterTree, node.id)) {
+            setProjectMasterTree(prev => {
+                const newTree = updateNodeInTree(prev, node.id, { expanded: !node.expanded });
+                setTimeout(() => {
+                    setScans(currentScans => {
+                        const updated = currentScans.map(s => ({ ...s, projectMasterFiles: newTree }));
+                        onSaveProject(updated, agentStates);
+                        return updated;
+                    });
+                }, 0);
+                return newTree;
+            });
+            return;
+        }
+
+        // Otherwise, update the per-scan tree
         updateCurrentScanViewerState(state => ({
             ...state,
             fileSystemTree: updateNodeInTree(state.fileSystemTree, node.id, { expanded: !node.expanded })
         }));
-    }, [updateCurrentScanViewerState]);
+    }, [updateCurrentScanViewerState, projectMasterTree, agentStates, onSaveProject]);
 
     const handleOpenFile = useCallback((node: FileSystemNode) => {
         if (node.type !== 'file' || !node.file) return;
+
+        // Skip macOS resource fork files
+        if (node.name.startsWith('._')) {
+            console.warn('Skipping macOS resource fork file:', node.name);
+            return;
+        }
 
         updateCurrentScanViewerState(state => {
             const allNodes = flattenTree(state.fileSystemTree);
@@ -1092,6 +1146,22 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     }, [updateCurrentScanViewerState, currentScanDate]);
 
     const handleRenameNode = useCallback((node: FileSystemNode, newName: string) => {
+        // Check Project Master
+        if (findNodeById(projectMasterTree, node.id)) {
+            setProjectMasterTree(prev => {
+                const newTree = renameNode(prev, node.id, newName);
+                setTimeout(() => {
+                    setScans(currentScans => {
+                        const updated = currentScans.map(s => ({ ...s, projectMasterFiles: newTree }));
+                        onSaveProject(updated, agentStates);
+                        return updated;
+                    });
+                }, 0);
+                return newTree;
+            });
+            return;
+        }
+
         updateCurrentScanViewerState(state => {
             const newTree = renameNode(state.fileSystemTree, node.id, newName);
 
@@ -1130,10 +1200,66 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 ...state,
                 fileSystemTree: newTree
             };
-        });
-    }, [currentScanDate, updateCurrentScanViewerState]);
+          });
+      }, [currentScanDate, updateCurrentScanViewerState, projectMasterTree, agentStates, onSaveProject]);
 
-    const handleDeleteNode = useCallback((node: FileSystemNode) => {
+    // Persistence helpers (defined early to avoid temporal dead zone)
+    const saveTreeToScans = useCallback(async (tree: FileSystemNode[]) => {
+        if (!currentScanDate) return;
+
+        const allNodes = flattenTree(tree);
+        const fileNodes = allNodes.filter(n => n.type === 'file' && n.file);
+
+        const serializableFiles = await Promise.all(fileNodes.map(n => {
+            if (!n.file) throw new Error("Node missing file");
+            return fileToSerializable(n.file, n.path);
+        }));
+
+        setScans(prev => prev.map(scan => {
+            if (scan.date === currentScanDate) {
+                return {
+                    ...scan,
+                    centerViewerFiles: serializableFiles
+                };
+            }
+            return scan;
+        }));
+    }, [currentScanDate]);
+
+    const updatePersistenceFromTree = useCallback(() => {
+        if (!currentScanDate) return;
+
+        setScanViewerState(prevState => {
+            const state = prevState[currentScanDate];
+            if (!state) return prevState;
+
+            // Trigger async save
+            saveTreeToScans(state.fileSystemTree);
+
+            return prevState;
+        });
+    }, [currentScanDate, saveTreeToScans]);
+  
+      const handleDeleteNode = useCallback((node: FileSystemNode) => {
+        // Check Project Master
+        if (findNodeById(projectMasterTree, node.id)) {
+            if (node.id === 'project-master-root') {
+                return; // Cannot delete root
+            }
+            setProjectMasterTree(prev => {
+                const newTree = removeNodeFromTree(prev, node.id);
+                setTimeout(() => {
+                    setScans(currentScans => {
+                        const updated = currentScans.map(s => ({ ...s, projectMasterFiles: newTree }));
+                        onSaveProject(updated, agentStates);
+                        return updated;
+                    });
+                }, 0);
+                return newTree;
+            });
+            return;
+        }
+
         updateCurrentScanViewerState(state => {
             const newTree = removeNodeFromTree(state.fileSystemTree, node.id);
 
@@ -1175,9 +1301,45 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             }
             return scan;
         }));
-    }, [currentScanDate, updateCurrentScanViewerState]);
+    }, [currentScanDate, updateCurrentScanViewerState, projectMasterTree, agentStates, onSaveProject]);
 
     const handleMoveNode = useCallback((nodeId: string, targetParentId: string | undefined) => {
+        // Determine if source is PM or Scan
+        const isSourcePM = !!findNodeById(projectMasterTree, nodeId);
+        
+        // Determine if target is PM or Scan
+        let isTargetPM = false;
+        if (targetParentId) {
+            // We need to check if targetParentId exists in PM tree
+            isTargetPM = !!findNodeById(projectMasterTree, targetParentId);
+        } else {
+            // Dropping to root? 
+            // If source was PM, dropping to root means root of PM? 
+            // Or root of Scan? 
+            // Let's assume root drop = same tree root.
+            isTargetPM = isSourcePM;
+        }
+
+        if (isSourcePM !== isTargetPM) {
+            console.warn("Moving between Project Master and Scan folders is not supported yet.");
+            return;
+        }
+
+        if (isSourcePM) {
+             setProjectMasterTree(prev => {
+                const newTree = moveNode(prev, nodeId, targetParentId);
+                setTimeout(() => {
+                    setScans(currentScans => {
+                        const updated = currentScans.map(s => ({ ...s, projectMasterFiles: newTree }));
+                        onSaveProject(updated, agentStates);
+                        return updated;
+                    });
+                }, 0);
+                return newTree;
+            });
+            return;
+        }
+
         updateCurrentScanViewerState(state => ({
             ...state,
             fileSystemTree: moveNode(state.fileSystemTree, nodeId, targetParentId)
@@ -1186,7 +1348,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setTimeout(() => {
             updatePersistenceFromTree();
         }, 0);
-    }, [updateCurrentScanViewerState]);
+    }, [updateCurrentScanViewerState, projectMasterTree, agentStates, onSaveProject, updatePersistenceFromTree]);
 
     const handleCreateFolder = useCallback((parentId?: string) => {
         const newFolder: FileSystemNode = {
@@ -1221,84 +1383,155 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }, 0);
     }, [updateCurrentScanViewerState]);
 
-    const updatePersistenceFromTree = useCallback(() => {
-        if (!currentScanDate) return;
+    // --- Specific Upload Handlers ---
 
-        // Get current tree from state ref or we need to pass it in
-        // Since we are using hooks, we can rely on the state in next render cycle
-        // OR we can access the state setter to get current state
-
-        setScanViewerState(prevState => {
-            const state = prevState[currentScanDate];
-            if (!state) return prevState;
-
-            const allNodes = flattenTree(state.fileSystemTree);
-            const fileNodes = allNodes.filter(n => n.type === 'file' && n.file);
-
-            // We need to map these nodes back to SerializableFiles
-            // We need to preserve storageId if it exists in the original list
-            // But wait, we only have the file object in node
-
-            // This is a complex part: mapping File objects back to their DB IDs
-            // We can try to match by name/size/type against the previous scan data?
-
-            setScans(prevScans => prevScans.map(scan => {
-                if (scan.date === currentScanDate) {
-                    // Create map of existing files for ID lookup
-                    const existingFilesMap = new Map<string, string>(); // key -> storageId
-                    scan.centerViewerFiles?.forEach(f => {
-                        if (f.storageId) {
-                            // key = name_size (simple key)
-                            // But name might have changed!
-                            // This is why we should probably store storageId on the Node itself
-                            // For now, let's assume new files = new IDs, old files = tricky
-                        }
-                    });
-
-                    // Since we can't easily recover IDs without storing them on nodes,
-                    // and we didn't add storageId to FileSystemNode,
-                    // we might re-upload renamed files as new files. 
-                    // Ideally FileSystemNode should have storageId.
-
-                    // Let's accept that for this MVP, renaming might break link to DB ID if not careful.
-                    // But wait, we use `fileToSerializable` which saves to DB.
-
-                    // We need to be async here to save new files
-                    // This cannot be done synchronously inside setScans
-
-                    return scan;
-                }
-                return scan;
-            }));
-
-            // Actually, let's trigger a side effect to save
-            saveTreeToScans(state.fileSystemTree);
-
-            return prevState;
-        });
-    }, [currentScanDate]);
-
-    const saveTreeToScans = async (tree: FileSystemNode[]) => {
-        if (!currentScanDate) return;
-
-        const allNodes = flattenTree(tree);
-        const fileNodes = allNodes.filter(n => n.type === 'file' && n.file);
-
-        const serializableFiles = await Promise.all(fileNodes.map(n => {
-            if (!n.file) throw new Error("Node missing file");
-            return fileToSerializable(n.file, n.path);
-        }));
-
-        setScans(prev => prev.map(scan => {
-            if (scan.date === currentScanDate) {
-                return {
-                    ...scan,
-                    centerViewerFiles: serializableFiles
-                };
+    const ensureFolderExists = (tree: FileSystemNode[], folderName: string, parentId?: string): { tree: FileSystemNode[], folderId: string } => {
+        let currentTree = [...tree];
+        
+        // Try to find existing folder
+        // We need to search in the correct scope (root or children of parentId)
+        let existingFolder: FileSystemNode | undefined;
+        
+        if (parentId) {
+            const parent = findNodeById(currentTree, parentId);
+            if (parent && parent.children) {
+                existingFolder = parent.children.find(n => n.name === folderName && n.type === 'folder');
             }
-            return scan;
-        }));
+        } else {
+            existingFolder = currentTree.find(n => n.name === folderName && n.type === 'folder');
+        }
+
+        if (existingFolder) {
+            return { tree: currentTree, folderId: existingFolder.id };
+        }
+
+        // Create new folder
+        const newFolderId = `folder-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const newFolder: FileSystemNode = {
+            id: newFolderId,
+            name: folderName,
+            type: 'folder',
+            path: folderName, // Will be fixed by updatePaths if needed, or we calculate it here
+            children: [],
+            expanded: true,
+            parentId
+        };
+
+        // Calculate path
+        if (parentId) {
+             const parent = findNodeById(currentTree, parentId);
+             if (parent) {
+                 newFolder.path = `${parent.path}/${folderName}`;
+             }
+        }
+
+        currentTree = addNodeToTree(currentTree, newFolder, parentId);
+        return { tree: currentTree, folderId: newFolderId };
     };
+
+    const handleUploadProjectMaster = useCallback((files: File[]) => {
+        setProjectMasterTree(prev => {
+            let tree = [...prev];
+            // Ensure root "Project Master" folder exists (it should be initialized, but safe check)
+            // Actually, we want files INSIDE "Project Master" root folder if it exists, or create it.
+            // Our init logic creates it with id 'project-master-root'.
+            
+            const rootId = 'project-master-root';
+            if (!findNodeById(tree, rootId)) {
+                 tree.push({
+                    id: rootId,
+                    name: 'Project Master',
+                    type: 'folder',
+                    path: 'Project Master',
+                    children: [],
+                    expanded: true
+                 });
+            }
+
+            const newNodes = buildTreeFromFiles(files);
+            newNodes.forEach(node => {
+                 // Update path to be inside "Project Master"
+                 const updatePath = (n: FileSystemNode, parentPath: string): FileSystemNode => {
+                      const p = `${parentPath}/${n.name}`;
+                      return { ...n, path: p, children: n.children?.map(c => updatePath(c, p)) };
+                 };
+                 const updatedNode = updatePath(node, 'Project Master');
+                 tree = addNodeToTree(tree, updatedNode, rootId);
+            });
+
+            // Update persistence
+            // We need to access current scans state to update them with new master files
+            setTimeout(() => {
+                setScans(currentScans => {
+                    const updated = currentScans.map(s => ({ ...s, projectMasterFiles: tree }));
+                    onSaveProject(updated, agentStates);
+                    return updated;
+                });
+            }, 0);
+
+            return tree;
+        });
+    }, [agentStates, onSaveProject]);
+
+    const handleUploadToScanFolder = useCallback((files: File[], folderPath: string[]) => {
+        if (!currentScanDate || !files.length) return;
+
+        updateCurrentScanViewerState(state => {
+            let tree = [...state.fileSystemTree];
+            let currentParentId: string | undefined = undefined;
+
+            // Create folder structure
+            folderPath.forEach(folderName => {
+                const result = ensureFolderExists(tree, folderName, currentParentId);
+                tree = result.tree;
+                currentParentId = result.folderId;
+            });
+
+            // Add files to the deepest folder
+            const newNodes = buildTreeFromFiles(files);
+            
+            // Calculate parent path prefix
+            let parentPath = '';
+            if (currentParentId) {
+                const parent = findNodeById(tree, currentParentId);
+                if (parent) parentPath = parent.path;
+            }
+
+            newNodes.forEach(node => {
+                 const updatePath = (n: FileSystemNode, prefix: string): FileSystemNode => {
+                      const p = prefix ? `${prefix}/${n.name}` : n.name;
+                      return { ...n, path: p, children: n.children?.map(c => updatePath(c, p)) };
+                 };
+                 const updatedNode = updatePath(node, parentPath);
+                 tree = addNodeToTree(tree, updatedNode, currentParentId);
+            });
+
+            return {
+                ...state,
+                fileSystemTree: tree
+            };
+        });
+
+        setTimeout(() => {
+            updatePersistenceFromTree();
+        }, 0);
+    }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree]);
+
+    const handleUploadModel = useCallback((files: File[]) => {
+        handleUploadToScanFolder(files, ['Models']);
+    }, [handleUploadToScanFolder]);
+
+    const handleUploadDeviation = useCallback((file: File) => {
+        handleUploadToScanFolder([file], ['3DR Reports', 'Deviation']);
+    }, [handleUploadToScanFolder]);
+
+    const handleUploadClash = useCallback((file: File) => {
+        handleUploadToScanFolder([file], ['3DR Reports', 'Clash']);
+    }, [handleUploadToScanFolder]);
+
+    const handleUploadProgress = useCallback((file: File) => {
+        handleUploadToScanFolder([file], ['3DR Reports', 'Progress']);
+    }, [handleUploadToScanFolder]);
 
     // Center viewer file management handlers
     const handleCenterViewerAddFile = useCallback(async (files: File[]) => {
@@ -2083,6 +2316,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         return () => window.clearTimeout(timer);
     }, [scans, agentStates, onSaveProject]);
 
+    // Combine Project Master and Scan trees for display
+    const displayedFileSystemTree = useMemo(() => {
+        return [...projectMasterTree, ...currentScanViewerState.fileSystemTree];
+    }, [projectMasterTree, currentScanViewerState.fileSystemTree]);
+
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
             <header className="relative flex items-center justify-between px-4 py-5 border-b border-[#2d3748] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-800 via-gray-900 to-black backdrop-blur-xl flex-shrink-0 min-h-[88px]">
@@ -2197,7 +2435,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     fileInputRef={centerViewerFileInputRef}
 
                                     // New Folder Tree Props
-                                    fileSystemTree={currentScanViewerState.fileSystemTree}
+                                    fileSystemTree={displayedFileSystemTree}
                                     selectedNodeId={currentScanViewerState.selectedNodeId}
                                     onSelectNode={handleSelectNode}
                                     onToggleExpand={handleToggleExpand}
@@ -2206,6 +2444,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     onMoveNode={handleMoveNode}
                                     onOpenFile={handleOpenFile}
                                     onCreateFolder={handleCreateFolder}
+                                    onUploadProjectMaster={handleUploadProjectMaster}
+                                    onUploadModel={handleUploadModel}
+                                    onUploadDeviation={handleUploadDeviation}
+                                    onUploadClash={handleUploadClash}
+                                    onUploadProgress={handleUploadProgress}
                                 />
                             )}
                         </div>

@@ -16,6 +16,14 @@ export const sortNodes = (nodes: FileSystemNode[]): FileSystemNode[] => {
  * Builds a file system tree from a flat list of files with webkitRelativePath or just name.
  */
 export const buildTreeFromFiles = (files: File[]): FileSystemNode[] => {
+  // Filter out macOS resource fork files (files starting with ._)
+  const validFiles = files.filter(file => {
+    const fileName = file.webkitRelativePath || file.name;
+    const parts = fileName.split('/');
+    // Check if any part of the path starts with ._
+    return !parts.some(part => part.startsWith('._'));
+  });
+
   const root: FileSystemNode[] = [];
   const map: Record<string, FileSystemNode> = {};
 
@@ -53,7 +61,7 @@ export const buildTreeFromFiles = (files: File[]): FileSystemNode[] => {
   };
 
   // Better approach: Process each file and create necessary folder structure
-  files.forEach(file => {
+  validFiles.forEach(file => {
     const filePath = file.webkitRelativePath || file.name;
     const parts = filePath.split('/');
     

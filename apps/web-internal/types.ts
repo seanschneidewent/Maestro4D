@@ -54,6 +54,7 @@ export interface ScanData {
   threeDAnnotations?: ThreeDAnnotation[];
   centerViewerFiles?: SerializableFile[];
   insights: Insight[];
+  projectMasterFiles?: FileSystemNode[]; // Shared across all scans
 }
 
 export type AgentType = 'market' | 'spec';
