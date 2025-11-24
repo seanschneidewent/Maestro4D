@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation, SerializableFile, FileSystemNode, Annotation } from '../types';
-import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
+import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon, RectangleIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
 import PdfToolsPanel from './PdfToolsPanel';
@@ -2071,6 +2071,28 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 const currentGroups = fileId ? (currentScanViewerState.pdfAnnotationGroups[fileId] || []) : [];
                 return (
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                        {/* Banner for adding multiple rectangles */}
+                        {addingRectangleToAnnotationId && (
+                            <div className="bg-cyan-600 border-b border-cyan-700 px-4 py-3 flex items-center justify-between shadow-lg">
+                                <div className="flex items-center gap-3">
+                                    <RectangleIcon className="w-5 h-5 text-white" />
+                                    <div className="flex flex-col">
+                                        <span className="text-white font-semibold text-sm">
+                                            Adding rectangles to: {currentFileAnnotations.find(a => a.id === addingRectangleToAnnotationId)?.title || 'Annotation'}
+                                        </span>
+                                        <span className="text-cyan-100 text-xs">
+                                            Draw rectangles on the PDF. Click Done when finished.
+                                        </span>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setAddingRectangleToAnnotationId(null)}
+                                    className="px-4 py-2 bg-white text-cyan-700 font-semibold rounded-md hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-cyan-600 transition-colors"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
                         <div className="flex-1 min-h-0 relative flex flex-col">
                             <PdfViewer
                                 pdfUrl={selectedCenterFile.url}
@@ -2127,8 +2149,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                             });
                                         }
                                         
-                                        // Reset the state
-                                        setAddingRectangleToAnnotationId(null);
+                                        // Keep mode active to allow adding more rectangles
+                                        // User must click "Done" button to exit
                                     } else {
                                         // Creating new annotation with rectangle
                                         setPendingRectangleId(rectangleId);
