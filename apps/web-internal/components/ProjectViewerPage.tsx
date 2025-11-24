@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation, SerializableFile, FileSystemNode } from '../types';
+import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, AnnotationGroup, ThreeDAnnotation, SerializableFile, FileSystemNode, Annotation } from '../types';
 import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
@@ -10,6 +10,7 @@ import InsightChatPanel from './InsightChatPanel';
 import TimelineScrubber from './TimelineScrubber';
 import AddScanModal from './AddScanModal';
 import GeminiPanel, { AgentsLogo } from './GeminiPanel';
+import AnnotationsPanel from './AnnotationsPanel';
 
 import { saveFileToDB, getFileFromDB, deleteFileFromDB } from '../utils/db';
 import {
@@ -1887,6 +1888,145 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }
     }, [centerFileType, selectedCenterFile]);
 
+    // Annotations Panel State
+    const [fileAnnotations, setFileAnnotations] = useState<Annotation[]>([]);
+    const [isAnnotationsPanelCollapsed, setIsAnnotationsPanelCollapsed] = useState(false);
+    const [annotationsPanelHeight, setAnnotationsPanelHeight] = useState(300);
+    const [isAddingAnnotation, setIsAddingAnnotation] = useState(false);
+    const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(new Set());
+    const [pendingRectangleId, setPendingRectangleId] = useState<string | null>(null);
+    const [addingRectangleToAnnotationId, setAddingRectangleToAnnotationId] = useState<string | null>(null);
+
+    const handleAddAnnotation = (title: string, description: string) => {
+        if (!selectedCenterFile) return;
+        // Use logic similar to getFileIdentifier or just use name/storageId as stable ID
+        const fileId = selectedCenterFile.storageId || selectedCenterFile.name;
+        
+        const newAnnotation: Annotation = {
+            id: Math.random().toString(36).substr(2, 9),
+            fileId: fileId,
+            title,
+            description,
+            linkedRectangleId: pendingRectangleId || undefined
+        };
+        setFileAnnotations(prev => [...prev, newAnnotation]);
+        
+        // If there's a pending rectangle, update it with the annotation ID
+        if (pendingRectangleId && currentScanDate) {
+            const pdfFileId = getFileIdentifier(selectedCenterFile.file);
+            updateCurrentScanViewerState(state => {
+                const currentPdfAnnotations = state.pdfAnnotations[pdfFileId] || {};
+                const updatedPdfAnnotations: Record<number, PdfAnnotation[]> = {};
+                
+                // Update the rectangle with the linkedAnnotationId
+                Object.entries(currentPdfAnnotations).forEach(([pageStr, pageAnnotations]) => {
+                    const pageNum = parseInt(pageStr, 10);
+                    updatedPdfAnnotations[pageNum] = (pageAnnotations as PdfAnnotation[]).map(annotation => {
+                        if (annotation.kind === 'rectangle' && annotation.id === pendingRectangleId) {
+                            return { ...annotation, linkedAnnotationId: newAnnotation.id };
+                        }
+                        return annotation;
+                    });
+                });
+                
+                return {
+                    ...state,
+                    pdfAnnotations: {
+                        ...state.pdfAnnotations,
+                        [pdfFileId]: updatedPdfAnnotations
+                    }
+                };
+            });
+        }
+        
+        setPendingRectangleId(null);
+    };
+
+    const handleEditAnnotation = (id: string, title: string, description: string) => {
+        setFileAnnotations(prev => prev.map(a => a.id === id ? { ...a, title, description } : a));
+    };
+
+    const handleAddRectangleToAnnotation = (annotationId: string) => {
+        setAddingRectangleToAnnotationId(annotationId);
+        // Switch to rectangle tool
+        pdfToolbarHandlers?.onToolChange('rectangle');
+        // Open PDF tools panel
+        setIsPdfToolsOpen(true);
+    };
+
+    const handleDeleteAnnotation = (id: string) => {
+        // Find the annotation to get its linkedRectangleId and linkedRectangleIds
+        const annotation = fileAnnotations.find(a => a.id === id);
+        
+        setFileAnnotations(prev => prev.filter(a => a.id !== id));
+        
+        // Collect all rectangle IDs to remove (both single and array)
+        const rectangleIdsToRemove: string[] = [];
+        if (annotation?.linkedRectangleId) {
+            rectangleIdsToRemove.push(annotation.linkedRectangleId);
+        }
+        if (annotation?.linkedRectangleIds) {
+            rectangleIdsToRemove.push(...annotation.linkedRectangleIds);
+        }
+        
+        // If the annotation had linked rectangles, remove them from PDF annotations
+        if (rectangleIdsToRemove.length > 0 && selectedCenterFile && currentScanDate) {
+            const pdfFileId = getFileIdentifier(selectedCenterFile.file);
+            updateCurrentScanViewerState(state => {
+                const currentPdfAnnotations = state.pdfAnnotations[pdfFileId] || {};
+                const updatedPdfAnnotations: Record<number, PdfAnnotation[]> = {};
+                
+                // Remove all associated rectangles from all pages
+                Object.entries(currentPdfAnnotations).forEach(([pageStr, pageAnnotations]) => {
+                    const pageNum = parseInt(pageStr, 10);
+                    updatedPdfAnnotations[pageNum] = (pageAnnotations as PdfAnnotation[]).filter(
+                        ann => !(ann.kind === 'rectangle' && rectangleIdsToRemove.includes(ann.id))
+                    );
+                });
+                
+                return {
+                    ...state,
+                    pdfAnnotations: {
+                        ...state.pdfAnnotations,
+                        [pdfFileId]: updatedPdfAnnotations
+                    }
+                };
+            });
+        }
+    };
+
+    // Filter annotations for current file
+    const currentFileId = selectedCenterFile?.storageId || selectedCenterFile?.name;
+    const currentFileAnnotations = useMemo(() => {
+        if (!currentFileId) return [];
+        return fileAnnotations.filter(a => a.fileId === currentFileId);
+    }, [fileAnnotations, currentFileId]);
+    
+    // Compute visible rectangle IDs based on selected annotations
+    const visibleRectangleIds = useMemo(() => {
+        if (selectedAnnotationIds.size === 0) {
+            // No annotations selected - show all rectangles (default behavior)
+            return undefined;
+        }
+        
+        // Only show rectangles linked to selected annotations
+        const rectangleIds = new Set<string>();
+        currentFileAnnotations.forEach(annotation => {
+            if (selectedAnnotationIds.has(annotation.id)) {
+                // Add the primary linked rectangle
+                if (annotation.linkedRectangleId) {
+                    rectangleIds.add(annotation.linkedRectangleId);
+                }
+                // Add all additional linked rectangles
+                if (annotation.linkedRectangleIds) {
+                    annotation.linkedRectangleIds.forEach(id => rectangleIds.add(id));
+                }
+            }
+        });
+        
+        return rectangleIds;
+    }, [selectedAnnotationIds, currentFileAnnotations]);
+
     // Render center viewer content based on file type
     const renderCenterViewerContent = () => {
         // If GLB mode is active, show the GLB viewer for the current scan
@@ -1931,18 +2071,89 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 const currentGroups = fileId ? (currentScanViewerState.pdfAnnotationGroups[fileId] || []) : [];
                 return (
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                        <PdfViewer
-                            pdfUrl={selectedCenterFile.url}
-                            onPdfUpload={handleCenterViewerPdfUpload}
-                            annotations={currentAnnotations}
-                            onAnnotationsChange={handleCenterViewerPdfAnnotationsChange}
-                            annotationGroups={currentGroups}
-                            onAnnotationGroupsChange={handleCenterViewerPdfAnnotationGroupsChange}
-                            isToolsOpen={isPdfToolsOpen}
-                            onToolsOpenChange={setIsPdfToolsOpen}
-                            renderToolbarExternally={true}
-                            onToolbarHandlersReady={setPdfToolbarHandlers}
-                            toolbarRef={toolbarRef}
+                        <div className="flex-1 min-h-0 relative flex flex-col">
+                            <PdfViewer
+                                pdfUrl={selectedCenterFile.url}
+                                onPdfUpload={handleCenterViewerPdfUpload}
+                                annotations={currentAnnotations}
+                                onAnnotationsChange={handleCenterViewerPdfAnnotationsChange}
+                                annotationGroups={currentGroups}
+                                onAnnotationGroupsChange={handleCenterViewerPdfAnnotationGroupsChange}
+                                isToolsOpen={isPdfToolsOpen}
+                                onToolsOpenChange={setIsPdfToolsOpen}
+                                renderToolbarExternally={true}
+                                onToolbarHandlersReady={setPdfToolbarHandlers}
+                                toolbarRef={toolbarRef}
+                                onRectangleCreated={(rectangleId) => {
+                                    if (addingRectangleToAnnotationId) {
+                                        // Adding rectangle to existing annotation
+                                        setFileAnnotations(prev => prev.map(annotation => {
+                                            if (annotation.id === addingRectangleToAnnotationId) {
+                                                // Add to linkedRectangleIds array
+                                                const existingIds = annotation.linkedRectangleIds || [];
+                                                return {
+                                                    ...annotation,
+                                                    linkedRectangleIds: [...existingIds, rectangleId]
+                                                };
+                                            }
+                                            return annotation;
+                                        }));
+                                        
+                                        // Update the PDF annotation to link back to the annotation
+                                        if (selectedCenterFile && currentScanDate) {
+                                            const pdfFileId = getFileIdentifier(selectedCenterFile.file);
+                                            updateCurrentScanViewerState(state => {
+                                                const currentPdfAnnotations = state.pdfAnnotations[pdfFileId] || {};
+                                                const updatedPdfAnnotations: Record<number, PdfAnnotation[]> = {};
+                                                
+                                                // Update the rectangle with the linkedAnnotationId
+                                                Object.entries(currentPdfAnnotations).forEach(([pageStr, pageAnnotations]) => {
+                                                    const pageNum = parseInt(pageStr, 10);
+                                                    updatedPdfAnnotations[pageNum] = (pageAnnotations as PdfAnnotation[]).map(pdfAnnotation => {
+                                                        if (pdfAnnotation.kind === 'rectangle' && pdfAnnotation.id === rectangleId) {
+                                                            return { ...pdfAnnotation, linkedAnnotationId: addingRectangleToAnnotationId };
+                                                        }
+                                                        return pdfAnnotation;
+                                                    });
+                                                });
+                                                
+                                                return {
+                                                    ...state,
+                                                    pdfAnnotations: {
+                                                        ...state.pdfAnnotations,
+                                                        [pdfFileId]: updatedPdfAnnotations
+                                                    }
+                                                };
+                                            });
+                                        }
+                                        
+                                        // Reset the state
+                                        setAddingRectangleToAnnotationId(null);
+                                    } else {
+                                        // Creating new annotation with rectangle
+                                        setPendingRectangleId(rectangleId);
+                                        setIsAddingAnnotation(true);
+                                        setIsAnnotationsPanelCollapsed(false);
+                                    }
+                                }}
+                                visibleRectangleIds={visibleRectangleIds}
+                            />
+                        </div>
+                        <AnnotationsPanel
+                            selectedFileName={selectedCenterFile.name}
+                            annotations={currentFileAnnotations}
+                            onAddAnnotation={handleAddAnnotation}
+                            onEditAnnotation={handleEditAnnotation}
+                            onDeleteAnnotation={handleDeleteAnnotation}
+                            isCollapsed={isAnnotationsPanelCollapsed}
+                            onToggleCollapse={() => setIsAnnotationsPanelCollapsed(!isAnnotationsPanelCollapsed)}
+                            height={annotationsPanelHeight}
+                            onHeightChange={setAnnotationsPanelHeight}
+                            isAdding={isAddingAnnotation}
+                            onIsAddingChange={setIsAddingAnnotation}
+                            selectedAnnotationIds={selectedAnnotationIds}
+                            onSelectedAnnotationIdsChange={setSelectedAnnotationIds}
+                            onAddRectangleToAnnotation={handleAddRectangleToAnnotation}
                         />
                     </div>
                 );

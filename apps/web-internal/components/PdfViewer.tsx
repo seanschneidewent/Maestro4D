@@ -49,6 +49,8 @@ interface PdfViewerProps {
   onToolbarHandlersReady?: (handlers: PdfToolbarHandlers) => void;
   renderToolbarExternally?: boolean;
   toolbarRef?: React.RefObject<HTMLDivElement>;
+  onRectangleCreated?: (rectangleId: string) => void;
+  visibleRectangleIds?: Set<string>;
 }
 
 export type Tool = 'pen' | 'text' | 'arrow' | 'rectangle';
@@ -163,7 +165,7 @@ const TextAnnotationEditor: React.FC<TextAnnotationEditorProps> = ({
   );
 };
 
-const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, annotationGroups: externalAnnotationGroups, onAnnotationGroupsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef }) => {
+const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, annotationGroups: externalAnnotationGroups, onAnnotationGroupsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef, onRectangleCreated, visibleRectangleIds }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isPanningRef = useRef(false);
@@ -241,13 +243,8 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
   }, [editingTextId]);
 
-  // Helper function to handle tool switching and clear pending rectangle link if switching away from arrow
+  // Helper function to handle tool switching
   const handleToolChange = useCallback((newTool: Tool) => {
-    // If manually switching to a tool other than arrow, clear pending rectangle link
-    // (automatic switch from rectangle to arrow uses setTool directly, not this function)
-    if (newTool !== 'arrow') {
-      pendingRectangleLinkRef.current = null;
-    }
     setTool(newTool);
   }, []);
 
@@ -274,7 +271,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   const resizeTimeoutRef = useRef<number | null>(null);
   const baseWidthRef = useRef<number | null>(null);
   const basePageDimensionsRef = useRef<Record<number, { width: number; height: number }>>({});
-  const pendingRectangleLinkRef = useRef<{ rectangleId: string; pageNumber: number; groupId: string } | null>(null);
   const [annotationGroups, setAnnotationGroups] = useState<AnnotationGroup[]>(externalAnnotationGroups || []);
   const pageRefs = useRef<Record<number, HTMLDivElement>>({});
 
@@ -466,6 +462,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         );
         ctx.stroke();
       } else if (annotation.kind === 'rectangle') {
+        // Check if this rectangle should be visible
+        if (visibleRectangleIds && !visibleRectangleIds.has(annotation.id)) {
+          return; // Skip rendering this rectangle
+        }
+
         const x = annotation.xNorm * canvas.width;
         const y = annotation.yNorm * canvas.height;
         const w = annotation.wNorm * canvas.width;
@@ -489,7 +490,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       }
       // Text annotations are rendered as DOM overlays, not on canvas
     });
-  }, [pageAnnotations]);
+  }, [pageAnnotations, visibleRectangleIds]);
 
   // Initialize overlay canvas size once at base dimensions
   const initBaseSize = useCallback((pageNumber: number) => {
@@ -924,11 +925,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         arrowDraft.headY
       );
 
-      // Check if there's a pending rectangle link
-      const pendingLink = pendingRectangleLinkRef.current;
-      const linkedRectangleId = pendingLink?.rectangleId;
-      const groupId = pendingLink?.groupId;
-
       const annotation: PdfAnnotation = {
         kind: 'arrow',
         id: arrowId,
@@ -946,38 +942,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         html: '',
         textColor: textColor,
         fontSize: fontSize,
-        ...(linkedRectangleId && { linkedRectangleId }),
-        ...(groupId && { groupId }),
       };
-
-      // Clear the pending rectangle link after using it
-      if (linkedRectangleId) {
-        pendingRectangleLinkRef.current = null;
-      }
-
-      // Create annotation group if we have a groupId and rectangle
-      if (groupId && linkedRectangleId) {
-        // Find the rectangle annotation to get its snapshot
-        const pageData = pageAnnotations[pageNumber];
-        const rectangleAnnotation = pageData?.annotations.find(
-          a => a.kind === 'rectangle' && a.id === linkedRectangleId
-        );
-
-        if (rectangleAnnotation && rectangleAnnotation.kind === 'rectangle' && rectangleAnnotation.snapshotDataUrl) {
-          const newGroup: AnnotationGroup = {
-            id: groupId,
-            rectangleId: linkedRectangleId,
-            arrowId: arrowId,
-            pageNumber: pageNumber,
-            snapshotDataUrl: rectangleAnnotation.snapshotDataUrl,
-            text: '',
-            html: '',
-            createdAt: new Date().toISOString(),
-          };
-
-          setAnnotationGroups(prev => [...prev, newGroup]);
-        }
-      }
 
       setPageAnnotations((prev) => {
         const pageData = prev[pageNumber] || { annotations: [], undoStack: [], redoStack: [] };
@@ -1004,19 +969,18 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const h = Math.max(Math.abs(rectangleDraft.endY - rectangleDraft.startY), minSize);
 
       const rectangleId = `rectangle-${Date.now()}-${Math.random()}`;
-      const groupId = `group-${Date.now()}-${Math.random()}`;
 
       // Capture snapshot asynchronously
       capturePageSnapshot(pageNumber, x, y, w, h).then((snapshotDataUrl) => {
         if (snapshotDataUrl) {
-          // Update rectangle annotation with snapshot and groupId
+          // Update rectangle annotation with snapshot
           setPageAnnotations((prev) => {
             const pageData = prev[pageNumber];
             if (!pageData) return prev;
 
             const updatedAnnotations = pageData.annotations.map(a =>
               a.kind === 'rectangle' && a.id === rectangleId
-                ? { ...a, snapshotDataUrl, groupId }
+                ? { ...a, snapshotDataUrl }
                 : a
             );
 
@@ -1040,7 +1004,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         hNorm: h,
         color: rectangleColor,
         width: strokeWidth,
-        groupId,
       };
 
       setPageAnnotations((prev) => {
@@ -1059,10 +1022,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       });
 
       setRectangleDraft(null);
-
-      // Store rectangle ID and groupId for linking and switch to arrow tool
-      pendingRectangleLinkRef.current = { rectangleId, pageNumber, groupId };
-      setTool('arrow');
+      
+      // Notify parent that a rectangle was created
+      if (onRectangleCreated) {
+        onRectangleCreated(rectangleId);
+      }
     }
 
     const canvas = canvasRefs.current[pageNumber];

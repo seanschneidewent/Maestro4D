@@ -9,7 +9,7 @@ export type PdfAnnotation =
   | { kind: 'stroke'; points: PdfNormalizedPoint[]; color: string; width: number }
   | { kind: 'text'; id: string; xNorm: number; yNorm: number; wNorm: number; hNorm: number; text: string; html?: string; color?: string; fontSize?: number }
   | { kind: 'arrow'; id: string; startXNorm: number; startYNorm: number; endXNorm: number; endYNorm: number; color: string; width: number; xNorm: number; yNorm: number; wNorm: number; hNorm: number; text: string; html?: string; textColor?: string; fontSize?: number; linkedRectangleId?: string; groupId?: string }
-  | { kind: 'rectangle'; id: string; xNorm: number; yNorm: number; wNorm: number; hNorm: number; color: string; width: number; groupId?: string; snapshotDataUrl?: string };
+  | { kind: 'rectangle'; id: string; xNorm: number; yNorm: number; wNorm: number; hNorm: number; color: string; width: number; groupId?: string; snapshotDataUrl?: string; linkedAnnotationId?: string };
 
 // Legacy interface for backward compatibility
 export interface PdfStroke {
@@ -181,4 +181,13 @@ export interface ProjectSummary {
   totalDeviations: number;
   deviationsBySeverity: Record<string, number>;
   deviationsByStatus: Record<string, number>;
+}
+
+export interface Annotation {
+  id: string;
+  fileId: string;
+  title: string;
+  description: string;
+  linkedRectangleId?: string;
+  linkedRectangleIds?: string[];
 }
