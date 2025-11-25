@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Project, ScanData, Severity, InsightStatus, AgentType, AgentState } from './types';
+import { Project, ScanData, Severity, InsightStatus, AgentType, AgentState, SerializableFile } from './types';
 import { MaestroLogo, PlusIcon, SearchIcon, FolderIcon, ChevronDownIcon, GridIcon, ListIcon, ArrowRightIcon, PencilIcon } from './components/Icons';
 import ProjectViewerPage from './components/ProjectViewerPage';
 import DashboardSidebar from './components/DashboardSidebar';
@@ -530,7 +530,7 @@ const App: React.FC = () => {
     setProjects(prev => [...prev, newProject]);
   }
 
-  const handleSaveProject = (projectId: string, updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => {
+  const handleSaveProject = (projectId: string, updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>, projectMasterFiles?: SerializableFile[]) => {
     setProjects(prevProjects =>
       prevProjects.map(p => {
         if (p.id === projectId) {
@@ -538,7 +538,7 @@ const App: React.FC = () => {
           const latestScan = [...updatedScans].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
           
           if (!latestScan) {
-             return { ...p, scans: updatedScans, agentStates };
+             return { ...p, scans: updatedScans, agentStates, projectMasterFiles: projectMasterFiles ?? p.projectMasterFiles };
           }
           
           const insights = latestScan.insights;
@@ -553,6 +553,7 @@ const App: React.FC = () => {
             ...p,
             scans: updatedScans,
             agentStates,
+            projectMasterFiles: projectMasterFiles ?? p.projectMasterFiles,
             lastScan: { ...p.lastScan, date: latestScan.date },
             progress,
             issues: {
@@ -601,7 +602,7 @@ const App: React.FC = () => {
             project={selectedProject} 
             onBack={handleBackToDashboard} 
             onUpdateProjectName={(newName) => handleUpdateProjectName(selectedProject.id, newName)}
-            onSaveProject={(updatedScans, agentStates) => handleSaveProject(selectedProject.id, updatedScans, agentStates)}
+            onSaveProject={(updatedScans, agentStates, projectMasterFiles) => handleSaveProject(selectedProject.id, updatedScans, agentStates, projectMasterFiles)}
         />
       )}
     </div>

@@ -113,6 +113,7 @@ export interface Project {
   modelUrl?: string;
   scans?: ScanData[];
   agentStates?: Record<AgentType, AgentState>;
+  projectMasterFiles?: SerializableFile[]; // Project-level files that persist across all scans
 }
 
 // Fix: Add InsightType enum
@@ -190,4 +191,5 @@ export interface Annotation {
   description: string;
   linkedRectangleId?: string;
   linkedRectangleIds?: string[];
+  linkedThreeDPointIds?: string[];
 }

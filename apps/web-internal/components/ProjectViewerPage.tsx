@@ -384,7 +384,7 @@ interface ProjectViewerPageProps {
     project: Project;
     onBack: () => void;
     onUpdateProjectName: (newName: string) => void;
-    onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>) => void;
+    onSaveProject: (updatedScans: ScanData[], agentStates: Record<AgentType, AgentState>, projectMasterFiles?: SerializableFile[]) => void;
 }
 
 const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
@@ -448,6 +448,11 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isGlbActive, setIsGlbActive] = useState(false);
     const [isBimActive, setIsBimActive] = useState(false);
     const [isListDataActive, setIsListDataActive] = useState(false);
+
+    // Project-level Project Master state (persists across all scans)
+    const [projectMasterFiles, setProjectMasterFiles] = useState<Array<{ name: string; url: string; file: File }>>([]);
+    const [projectMasterTree, setProjectMasterTree] = useState<FileSystemNode[]>([]);
+    const projectMasterUrlsRef = useRef<string[]>([]);
 
     // Per-scan viewer state map - keyed by scan date
     const [scanViewerState, setScanViewerState] = useState<Record<string, ScanViewerState>>({});
@@ -623,7 +628,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
         setScanViewerState(initialViewerState);
 
-        // Async load files
+        // Async load scan-specific files
         const loadFiles = async () => {
             for (const scan of initialScans) {
                 if (!scan.centerViewerFiles || scan.centerViewerFiles.length === 0) continue;
@@ -671,6 +676,38 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             }
         };
         loadFiles();
+
+        // Async load project-level Project Master files
+        const loadProjectMasterFiles = async () => {
+            if (!project.projectMasterFiles || project.projectMasterFiles.length === 0) return;
+
+            try {
+                const hydratedFiles = await Promise.all(project.projectMasterFiles.map(async sFile => {
+                    const file = await serializableToFile(sFile);
+                    const url = URL.createObjectURL(file);
+                    projectMasterUrlsRef.current.push(url);
+
+                    // Attach path from serialized object if available
+                    if (sFile.path) {
+                        Object.defineProperty(file, 'webkitRelativePath', {
+                            value: sFile.path,
+                            writable: false
+                        });
+                    }
+
+                    return { name: file.name, url, file };
+                }));
+
+                const filesOnly = hydratedFiles.map(f => f.file);
+                const tree = buildTreeFromFiles(filesOnly);
+
+                setProjectMasterFiles(hydratedFiles);
+                setProjectMasterTree(tree);
+            } catch (error) {
+                console.error('Error loading project master files:', error);
+            }
+        };
+        loadProjectMasterFiles();
 
         // Set current date to the latest scan date present in the project data
         const latestScanDate = initialScans.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.date || project.lastScan.date;
@@ -1028,6 +1065,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
     // --- Tree Action Handlers ---
 
+    // Helper to check if a node is in the Project Master tree (project-level)
+    const isProjectMasterNode = useCallback((nodeId: string): boolean => {
+        if (nodeId === 'project-master-root') return true;
+        const flatNodes = flattenTree(projectMasterTree);
+        return flatNodes.some(n => n.id === nodeId);
+    }, [projectMasterTree]);
+
     const handleSelectNode = useCallback((node: FileSystemNode) => {
         updateCurrentScanViewerState(state => ({
             ...state,
@@ -1038,11 +1082,16 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const handleToggleExpand = useCallback((node: FileSystemNode) => {
         if (node.type !== 'folder') return;
 
-        updateCurrentScanViewerState(state => ({
-            ...state,
-            fileSystemTree: updateNodeInTree(state.fileSystemTree, node.id, { expanded: !node.expanded })
-        }));
-    }, [updateCurrentScanViewerState]);
+        // Check if node is in Project Master tree
+        if (isProjectMasterNode(node.id)) {
+            setProjectMasterTree(prev => updateNodeInTree(prev, node.id, { expanded: !node.expanded }));
+        } else {
+            updateCurrentScanViewerState(state => ({
+                ...state,
+                fileSystemTree: updateNodeInTree(state.fileSystemTree, node.id, { expanded: !node.expanded })
+            }));
+        }
+    }, [updateCurrentScanViewerState, isProjectMasterNode]);
 
     const handleOpenFile = useCallback((node: FileSystemNode) => {
         if (node.type !== 'file' || !node.file) return;
@@ -1053,37 +1102,58 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             return;
         }
 
+        // Check if this is a Project Master file
+        const isPMNode = isProjectMasterNode(node.id);
+
         updateCurrentScanViewerState(state => {
-            const allNodes = flattenTree(state.fileSystemTree);
-            const fileNodes = allNodes.filter(n => n.type === 'file');
-            const fileIndex = fileNodes.findIndex(n => n.id === node.id);
+            // For file index calculation, include both scan files and project master files
+            const scanFileNodes = flattenTree(state.fileSystemTree).filter(n => n.type === 'file');
+            const pmFileNodes = flattenTree(projectMasterTree).filter(n => n.type === 'file');
+            const allFileNodes = [...pmFileNodes, ...scanFileNodes];
+            const fileIndex = allFileNodes.findIndex(n => n.id === node.id);
 
-            // Ensure the file has a URL in centerViewerFiles
+            // Ensure the file has a URL in centerViewerFiles or projectMasterFiles
             let updatedFiles = [...state.centerViewerFiles];
-            const existingIndex = updatedFiles.findIndex(f =>
-                f.file === node.file ||
-                (f.name === node.name && f.file.size === node.file.size)
-            );
+            
+            if (isPMNode) {
+                // For PM files, check projectMasterFiles for URL
+                const existingPMFile = projectMasterFiles.find(f => 
+                    f.file === node.file ||
+                    (f.name === node.name && f.file.size === node.file?.size)
+                );
+                
+                if (!existingPMFile) {
+                    // PM file should exist, but if not, create URL
+                    const url = URL.createObjectURL(node.file);
+                    projectMasterUrlsRef.current.push(url);
+                    setProjectMasterFiles(prev => [...prev, { name: node.name, url, file: node.file! }]);
+                }
+            } else {
+                const existingIndex = updatedFiles.findIndex(f =>
+                    f.file === node.file ||
+                    (f.name === node.name && f.file.size === node.file?.size)
+                );
 
-            if (existingIndex >= 0) {
-                // File exists, ensure it has a URL
-                const existingFile = updatedFiles[existingIndex];
-                if (!existingFile.url) {
+                if (existingIndex >= 0) {
+                    // File exists, ensure it has a URL
+                    const existingFile = updatedFiles[existingIndex];
+                    if (!existingFile.url) {
+                        const url = URL.createObjectURL(node.file);
+                        centerViewerUrlsRef.current[currentScanDate] = centerViewerUrlsRef.current[currentScanDate] || [];
+                        centerViewerUrlsRef.current[currentScanDate].push(url);
+                        updatedFiles[existingIndex] = { ...existingFile, url };
+                    }
+                } else {
+                    // File not in centerViewerFiles, add it with URL
                     const url = URL.createObjectURL(node.file);
                     centerViewerUrlsRef.current[currentScanDate] = centerViewerUrlsRef.current[currentScanDate] || [];
                     centerViewerUrlsRef.current[currentScanDate].push(url);
-                    updatedFiles[existingIndex] = { ...existingFile, url };
+                    updatedFiles.push({
+                        name: node.name,
+                        url,
+                        file: node.file
+                    });
                 }
-            } else {
-                // File not in centerViewerFiles, add it with URL
-                const url = URL.createObjectURL(node.file);
-                centerViewerUrlsRef.current[currentScanDate] = centerViewerUrlsRef.current[currentScanDate] || [];
-                centerViewerUrlsRef.current[currentScanDate].push(url);
-                updatedFiles.push({
-                    name: node.name,
-                    url,
-                    file: node.file
-                });
             }
 
             return {
@@ -1094,49 +1164,49 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 selectedFileIndex: fileIndex >= 0 ? fileIndex : 0
             };
         });
-    }, [updateCurrentScanViewerState, currentScanDate]);
+    }, [updateCurrentScanViewerState, currentScanDate, isProjectMasterNode, projectMasterTree, projectMasterFiles]);
 
     const handleRenameNode = useCallback((node: FileSystemNode, newName: string) => {
-        updateCurrentScanViewerState(state => {
-            const newTree = renameNode(state.fileSystemTree, node.id, newName);
+        // Check if node is in Project Master tree
+        if (isProjectMasterNode(node.id)) {
+            // Don't allow renaming the root Project Master folder
+            if (node.id === 'project-master-root') return;
+            
+            setProjectMasterTree(prev => renameNode(prev, node.id, newName));
+            // projectMasterFiles will be re-serialized in the auto-save effect
+        } else {
+            updateCurrentScanViewerState(state => {
+                const newTree = renameNode(state.fileSystemTree, node.id, newName);
 
-            // Also need to update the persistence (Project/Scan data)
-            // This is tricky because we need to map back to centerViewerFiles
-            // For now, we just update state and rely on saveProject to trigger later
+                // Update scan state for persistence
+                const allNodes = flattenTree(newTree);
+                const filesOnly = allNodes.filter(n => n.type === 'file' && n.file);
 
-            // Update scan state for persistence
-            const allNodes = flattenTree(newTree);
-            const filesOnly = allNodes.filter(n => n.type === 'file' && n.file);
+                // Trigger persistence update
+                setTimeout(() => {
+                    setScans(prev => prev.map(scan => {
+                        if (scan.date === currentScanDate) {
+                            return {
+                                ...scan,
+                                centerViewerFiles: filesOnly.map(n => ({
+                                    name: n.name,
+                                    type: n.file?.type || 'application/octet-stream',
+                                    size: n.file?.size || 0,
+                                    path: n.path,
+                                }))
+                            };
+                        }
+                        return scan;
+                    }));
+                }, 0);
 
-            // We need to update the file object's path if we can (read-only) or just tracking
-            // In persistence we save `path`
-
-            // Trigger persistence update
-            setTimeout(() => {
-                setScans(prev => prev.map(scan => {
-                    if (scan.date === currentScanDate) {
-                        return {
-                            ...scan,
-                            centerViewerFiles: filesOnly.map(n => ({
-                                name: n.name, // Filename might be different from node name if renamed? No, node.name is filename
-                                type: n.file?.type || 'application/octet-stream',
-                                size: n.file?.size || 0,
-                                path: n.path,
-                                // storageId needs to be preserved... tricky
-                                // We probably need to keep map of original file to storageId
-                            }))
-                        };
-                    }
-                    return scan;
-                }));
-            }, 0);
-
-            return {
-                ...state,
-                fileSystemTree: newTree
-            };
-          });
-      }, [currentScanDate, updateCurrentScanViewerState]);
+                return {
+                    ...state,
+                    fileSystemTree: newTree
+                };
+            });
+        }
+    }, [currentScanDate, updateCurrentScanViewerState, isProjectMasterNode]);
 
     // Persistence helpers (defined early to avoid temporal dead zone)
     const saveTreeToScans = useCallback(async (tree: FileSystemNode[]) => {
@@ -1175,93 +1245,153 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
     }, [currentScanDate, saveTreeToScans]);
   
-      const handleDeleteNode = useCallback((node: FileSystemNode) => {
-        updateCurrentScanViewerState(state => {
-            const newTree = removeNodeFromTree(state.fileSystemTree, node.id);
+    const handleDeleteNode = useCallback((node: FileSystemNode) => {
+        // Check if node is in Project Master tree
+        if (isProjectMasterNode(node.id)) {
+            // Don't allow deleting the root Project Master folder
+            if (node.id === 'project-master-root') return;
+            
+            // Get files to delete and revoke their URLs
+            const nodesToDelete = flattenTree([node]);
+            const fileNodesToDelete = nodesToDelete.filter(n => n.type === 'file' && n.file);
+            
+            // Revoke URLs for deleted files
+            fileNodesToDelete.forEach(n => {
+                const pmFile = projectMasterFiles.find(f => f.file === n.file);
+                if (pmFile?.url) {
+                    URL.revokeObjectURL(pmFile.url);
+                    const idx = projectMasterUrlsRef.current.indexOf(pmFile.url);
+                    if (idx >= 0) projectMasterUrlsRef.current.splice(idx, 1);
+                }
+            });
+            
+            // Update Project Master tree
+            setProjectMasterTree(prev => removeNodeFromTree(prev, node.id));
+            
+            // Update Project Master files list
+            setProjectMasterFiles(prev => prev.filter(f => 
+                !fileNodesToDelete.some(n => n.file === f.file)
+            ));
+            
+            // Reset selection if deleted node was selected
+            updateCurrentScanViewerState(state => {
+                const wasSelected = state.selectedNodeId === node.id || (node.type === 'folder' && findNodeById([node], state.selectedNodeId || ''));
+                const wasOpened = state.openedFileId === node.id || (node.type === 'folder' && findNodeById([node], state.openedFileId || ''));
+                
+                if (wasSelected || wasOpened) {
+                    return {
+                        ...state,
+                        selectedNodeId: wasSelected ? null : state.selectedNodeId,
+                        openedFileId: wasOpened ? null : state.openedFileId
+                    };
+                }
+                return state;
+            });
+        } else {
+            updateCurrentScanViewerState(state => {
+                const newTree = removeNodeFromTree(state.fileSystemTree, node.id);
 
-            // If deleted node was selected or opened, reset selection
-            const wasSelected = state.selectedNodeId === node.id || (node.type === 'folder' && findNodeById([node], state.selectedNodeId || ''));
-            const wasOpened = state.openedFileId === node.id || (node.type === 'folder' && findNodeById([node], state.openedFileId || ''));
+                // If deleted node was selected or opened, reset selection
+                const wasSelected = state.selectedNodeId === node.id || (node.type === 'folder' && findNodeById([node], state.selectedNodeId || ''));
+                const wasOpened = state.openedFileId === node.id || (node.type === 'folder' && findNodeById([node], state.openedFileId || ''));
 
-            return {
-                ...state,
-                fileSystemTree: newTree,
-                selectedNodeId: wasSelected ? null : state.selectedNodeId,
-                openedFileId: wasOpened ? null : state.openedFileId
-            };
-        });
+                return {
+                    ...state,
+                    fileSystemTree: newTree,
+                    selectedNodeId: wasSelected ? null : state.selectedNodeId,
+                    openedFileId: wasOpened ? null : state.openedFileId
+                };
+            });
 
-        // Update persistence
-        setScans(prev => prev.map(scan => {
-            if (scan.date === currentScanDate) {
-                const nodesToDelete = flattenTree([node]);
-                const fileNodesToDelete = nodesToDelete.filter(n => n.type === 'file' && n.file);
-
-                // We need to remove these from centerViewerFiles in scan
-                // But we don't have direct mapping here easily without ID map
-                // Simpler: rebuild centerViewerFiles from the NEW tree
-
-                // But we need to actually delete from DB to clean up storage
-                // This part is missing: we need storageIds
-
-                // Reconstruct valid files list from state (pre-update) is hard because we are in setScans callback
-                // Better to rely on the updateCurrentScanViewerState to have updated the tree, 
-                // then we read the NEW tree to save.
-
-                // Let's do a second pass for persistence after state update
-                setTimeout(() => {
-                    updatePersistenceFromTree();
-                }, 0);
-
-                return scan;
-            }
-            return scan;
-        }));
-    }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree]);
+            // Update persistence for scan-specific files
+            setTimeout(() => {
+                updatePersistenceFromTree();
+            }, 0);
+        }
+    }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree, isProjectMasterNode, projectMasterFiles]);
 
     const handleMoveNode = useCallback((nodeId: string, targetParentId: string | undefined) => {
-        updateCurrentScanViewerState(state => ({
-            ...state,
-            fileSystemTree: moveNode(state.fileSystemTree, nodeId, targetParentId)
-        }));
+        // Check if node and target are both in Project Master tree or both in scan tree
+        const nodeInPM = isProjectMasterNode(nodeId);
+        const targetInPM = targetParentId ? isProjectMasterNode(targetParentId) : false;
+        
+        // Don't allow moving between Project Master and scan trees
+        if (nodeInPM !== targetInPM && targetParentId !== undefined) {
+            console.warn('Cannot move nodes between Project Master and scan-specific files');
+            return;
+        }
+        
+        if (nodeInPM) {
+            // Don't allow moving the root Project Master folder
+            if (nodeId === 'project-master-root') return;
+            
+            setProjectMasterTree(prev => moveNode(prev, nodeId, targetParentId));
+        } else {
+            updateCurrentScanViewerState(state => ({
+                ...state,
+                fileSystemTree: moveNode(state.fileSystemTree, nodeId, targetParentId)
+            }));
 
-        setTimeout(() => {
-            updatePersistenceFromTree();
-        }, 0);
-    }, [updateCurrentScanViewerState, updatePersistenceFromTree]);
+            setTimeout(() => {
+                updatePersistenceFromTree();
+            }, 0);
+        }
+    }, [updateCurrentScanViewerState, updatePersistenceFromTree, isProjectMasterNode]);
 
     const handleCreateFolder = useCallback((parentId?: string) => {
+        // Check if parent is in Project Master tree
+        const parentInPM = parentId ? isProjectMasterNode(parentId) : false;
+        
         const newFolder: FileSystemNode = {
             id: `folder-${Date.now()}`,
             name: 'New Folder',
             type: 'folder',
-            path: 'New Folder', // Will be updated by addNodeToTree logic implicitly? No
+            path: 'New Folder',
             children: [],
             expanded: false,
             parentId
         };
 
-        // We need correct path
-        updateCurrentScanViewerState(state => {
-            let parentPath = '';
-            if (parentId) {
-                const parent = findNodeById(state.fileSystemTree, parentId);
-                if (parent) parentPath = parent.path;
-            }
-            newFolder.path = parentPath ? `${parentPath}/${newFolder.name}` : newFolder.name;
-
-            const newTree = addNodeToTree(state.fileSystemTree, newFolder, parentId);
-            return {
+        if (parentInPM) {
+            // Create folder in Project Master tree
+            setProjectMasterTree(prev => {
+                let parentPath = '';
+                if (parentId) {
+                    const parent = findNodeById(prev, parentId);
+                    if (parent) parentPath = parent.path;
+                }
+                newFolder.path = parentPath ? `${parentPath}/${newFolder.name}` : newFolder.name;
+                return addNodeToTree(prev, newFolder, parentId);
+            });
+            
+            // Select the new folder
+            updateCurrentScanViewerState(state => ({
                 ...state,
-                fileSystemTree: newTree,
-                selectedNodeId: newFolder.id // Select the new folder
-            };
-        });
+                selectedNodeId: newFolder.id
+            }));
+        } else {
+            // Create folder in scan-specific tree
+            updateCurrentScanViewerState(state => {
+                let parentPath = '';
+                if (parentId) {
+                    const parent = findNodeById(state.fileSystemTree, parentId);
+                    if (parent) parentPath = parent.path;
+                }
+                newFolder.path = parentPath ? `${parentPath}/${newFolder.name}` : newFolder.name;
 
-        setTimeout(() => {
-            updatePersistenceFromTree();
-        }, 0);
-    }, [updateCurrentScanViewerState]);
+                const newTree = addNodeToTree(state.fileSystemTree, newFolder, parentId);
+                return {
+                    ...state,
+                    fileSystemTree: newTree,
+                    selectedNodeId: newFolder.id
+                };
+            });
+
+            setTimeout(() => {
+                updatePersistenceFromTree();
+            }, 0);
+        }
+    }, [updateCurrentScanViewerState, isProjectMasterNode]);
 
     // --- Specific Upload Handlers ---
 
@@ -1353,9 +1483,41 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }, 0);
     }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree]);
 
+    // Project-level Project Master upload handler - saves to project level, not per-scan
     const handleUploadProjectMaster = useCallback((files: File[]) => {
-        handleUploadToScanFolder(files, ['Project Master']);
-    }, [handleUploadToScanFolder]);
+        if (!files || files.length === 0) return;
+
+        // Filter out invalid/system files
+        const validFiles = files.filter(file => {
+            const name = file.name;
+            if (name.startsWith('._')) return false;
+            if (name === '.DS_Store' || name === 'Thumbs.db') return false;
+            if (name.startsWith('~$')) return false;
+            return true;
+        });
+
+        if (validFiles.length === 0) return;
+
+        // Create file data with URLs
+        const newFileData = validFiles.map(file => {
+            const url = URL.createObjectURL(file);
+            projectMasterUrlsRef.current.push(url);
+            return { name: file.name, url, file };
+        });
+
+        // Build tree structure from files
+        const newTreeNodes = buildTreeFromFiles(validFiles);
+
+        // Update project master state
+        setProjectMasterFiles(prev => [...prev, ...newFileData]);
+        setProjectMasterTree(prev => {
+            let mergedTree = [...prev];
+            newTreeNodes.forEach(node => {
+                mergedTree = addNodeToTree(mergedTree, node, undefined);
+            });
+            return mergedTree;
+        });
+    }, []);
 
     const handleUploadModel = useCallback((files: File[]) => {
         handleUploadToScanFolder(files, ['Models']);
@@ -1826,21 +1988,31 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         const state = currentScanViewerState;
 
         if (state.openedFileId) {
-            const allNodes = flattenTree(state.fileSystemTree);
+            // Search in both scan-specific and project master trees
+            const scanNodes = flattenTree(state.fileSystemTree);
+            const pmNodes = flattenTree(projectMasterTree);
+            const allNodes = [...pmNodes, ...scanNodes];
+            
             const node = allNodes.find(n => n.id === state.openedFileId);
             if (node && node.file) {
-                // Find in centerViewerFiles with robust matching
-                const match = state.centerViewerFiles.find(f =>
+                // Check in both centerViewerFiles and projectMasterFiles
+                const matchInCenter = state.centerViewerFiles.find(f =>
                     f.file === node.file ||
                     (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
                 );
-                if (match && match.url) return match;
+                if (matchInCenter && matchInCenter.url) return matchInCenter;
+                
+                const matchInPM = projectMasterFiles.find(f =>
+                    f.file === node.file ||
+                    (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
+                );
+                if (matchInPM && matchInPM.url) return matchInPM;
             }
         }
 
         // Fallback to index-based selection
         return validSelectedIndex >= 0 ? state.centerViewerFiles[validSelectedIndex] : undefined;
-    }, [currentScanViewerState, validSelectedIndex]);
+    }, [currentScanViewerState, validSelectedIndex, projectMasterTree, projectMasterFiles]);
 
     const centerFileType = useMemo(() => {
         return selectedCenterFile ? getFileType(selectedCenterFile.file) : 'other';
@@ -1896,6 +2068,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(new Set());
     const [pendingRectangleId, setPendingRectangleId] = useState<string | null>(null);
     const [addingRectangleToAnnotationId, setAddingRectangleToAnnotationId] = useState<string | null>(null);
+    const [pendingThreeDPointId, setPendingThreeDPointId] = useState<string | null>(null);
+    const [addingPointToAnnotationId, setAddingPointToAnnotationId] = useState<string | null>(null);
 
     const handleAddAnnotation = (title: string, description: string) => {
         if (!selectedCenterFile) return;
@@ -1907,7 +2081,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             fileId: fileId,
             title,
             description,
-            linkedRectangleId: pendingRectangleId || undefined
+            linkedRectangleId: pendingRectangleId || undefined,
+            linkedThreeDPointIds: pendingThreeDPointId ? [pendingThreeDPointId] : undefined
         };
         setFileAnnotations(prev => [...prev, newAnnotation]);
         
@@ -1940,6 +2115,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         }
         
         setPendingRectangleId(null);
+        setPendingThreeDPointId(null);
     };
 
     const handleEditAnnotation = (id: string, title: string, description: string) => {
@@ -1955,7 +2131,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     };
 
     const handleDeleteAnnotation = (id: string) => {
-        // Find the annotation to get its linkedRectangleId and linkedRectangleIds
+        // Find the annotation to get its linkedRectangleId, linkedRectangleIds, and linkedThreeDPointIds
         const annotation = fileAnnotations.find(a => a.id === id);
         
         setFileAnnotations(prev => prev.filter(a => a.id !== id));
@@ -1993,6 +2169,21 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 };
             });
         }
+        
+        // If the annotation had linked 3D points, remove them from threeDAnnotations
+        if (annotation?.linkedThreeDPointIds && annotation.linkedThreeDPointIds.length > 0 && currentScanDate) {
+            setScans(prev => prev.map(scan => {
+                if (scan.date === currentScanDate) {
+                    return {
+                        ...scan,
+                        threeDAnnotations: (scan.threeDAnnotations || []).filter(
+                            ann => !annotation.linkedThreeDPointIds!.includes(ann.id)
+                        )
+                    };
+                }
+                return scan;
+            }));
+        }
     };
 
     // Filter annotations for current file
@@ -2001,6 +2192,42 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         if (!currentFileId) return [];
         return fileAnnotations.filter(a => a.fileId === currentFileId);
     }, [fileAnnotations, currentFileId]);
+
+    // Compute annotation counts by node ID for the file tree
+    // Annotations use storageId/name as fileId, but tree uses node.id
+    // We need to map between them using centerViewerFiles as the bridge
+    const annotationCountByFileId = useMemo(() => {
+        // First, count annotations by their fileId (storageId or name)
+        const countsByFileId: Record<string, number> = {};
+        fileAnnotations.forEach(annotation => {
+            countsByFileId[annotation.fileId] = (countsByFileId[annotation.fileId] || 0) + 1;
+        });
+
+        // Then, map node IDs to annotation counts
+        const countsByNodeId: Record<string, number> = {};
+        // Include both scan tree nodes AND Project Master tree nodes
+        const scanNodes = flattenTree(currentScanViewerState.fileSystemTree);
+        const projectMasterNodes = flattenTree(projectMasterTree);
+        const allNodes = [...scanNodes, ...projectMasterNodes];
+        const centerFiles = currentScanViewerState.centerViewerFiles;
+
+        allNodes.filter(n => n.type === 'file' && n.file).forEach(node => {
+            // Find matching centerViewerFile to get the storageId
+            const match = centerFiles.find(f =>
+                f.file === node.file ||
+                (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
+            );
+
+            // Determine the fileId used for annotations
+            const fileId = match?.storageId || node.name;
+            
+            if (countsByFileId[fileId]) {
+                countsByNodeId[node.id] = countsByFileId[fileId];
+            }
+        });
+
+        return countsByNodeId;
+    }, [fileAnnotations, currentScanViewerState.fileSystemTree, currentScanViewerState.centerViewerFiles, projectMasterTree]);
     
     // Compute visible rectangle IDs based on selected annotations
     const visibleRectangleIds = useMemo(() => {
@@ -2026,21 +2253,123 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         
         return rectangleIds;
     }, [selectedAnnotationIds, currentFileAnnotations]);
+    
+    // Compute highlighted 3D point IDs based on selected annotations
+    const highlightedThreeDPointIds = useMemo(() => {
+        if (selectedAnnotationIds.size === 0) {
+            return [];
+        }
+        
+        const pointIds: string[] = [];
+        currentFileAnnotations.forEach(annotation => {
+            if (selectedAnnotationIds.has(annotation.id)) {
+                if (annotation.linkedThreeDPointIds) {
+                    pointIds.push(...annotation.linkedThreeDPointIds);
+                }
+            }
+        });
+        
+        return pointIds;
+    }, [selectedAnnotationIds, currentFileAnnotations]);
+    
+    // Handler for adding 3D point to existing annotation
+    const handleAddPointToAnnotation = (annotationId: string) => {
+        setAddingPointToAnnotationId(annotationId);
+    };
+    
+    // Handler for when a 3D point is created in the Viewer
+    const handleThreeDPointCreated = (pointId: string) => {
+        if (addingPointToAnnotationId) {
+            // Adding point to existing annotation
+            setFileAnnotations(prev => prev.map(annotation => {
+                if (annotation.id === addingPointToAnnotationId) {
+                    const existingIds = annotation.linkedThreeDPointIds || [];
+                    return {
+                        ...annotation,
+                        linkedThreeDPointIds: [...existingIds, pointId]
+                    };
+                }
+                return annotation;
+            }));
+            // Keep mode active to allow adding more points
+            // User must click "Done" button to exit
+        } else {
+            // Creating new annotation with point
+            setPendingThreeDPointId(pointId);
+            setIsAddingAnnotation(true);
+            setIsAnnotationsPanelCollapsed(false);
+        }
+    };
 
     // Render center viewer content based on file type
     const renderCenterViewerContent = () => {
         // If GLB mode is active, show the GLB viewer for the current scan
         if (isGlbActive) {
+            // Use scan date as file ID for the main GLB model
+            const glbFileId = `glb-${currentScanDate}`;
+            const glbFileAnnotations = fileAnnotations.filter(a => a.fileId === glbFileId);
+            const glbHighlightedPointIds = selectedAnnotationIds.size === 0 ? [] : 
+                glbFileAnnotations.filter(a => selectedAnnotationIds.has(a.id))
+                    .flatMap(a => a.linkedThreeDPointIds || []);
+            
             return (
-                <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                    <Viewer
-                        modelUrl={currentScan?.modelUrl}
-                        onModelUpload={handleModelUpload}
-                        annotations={currentScan?.threeDAnnotations}
-                        onAnnotationAdd={handleThreeDAnnotationAdd}
-                        insights={currentScan?.insights}
-                        onAnnotationSelect={handleThreeDAnnotationSelect}
-                        onAnnotationDelete={handleThreeDAnnotationDelete}
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                    {/* Banner for adding multiple points */}
+                    {addingPointToAnnotationId && (
+                        <div className="bg-cyan-600 border-b border-cyan-700 px-4 py-3 flex items-center justify-between shadow-lg">
+                            <div className="flex flex-col">
+                                <span className="text-white font-semibold text-sm">
+                                    Adding points to: {glbFileAnnotations.find(a => a.id === addingPointToAnnotationId)?.title || 'Annotation'}
+                                </span>
+                                <span className="text-cyan-100 text-xs">
+                                    Click on the 3D model to add points. Click Done when finished.
+                                </span>
+                            </div>
+                            <button
+                                onClick={() => setAddingPointToAnnotationId(null)}
+                                className="px-4 py-2 bg-white text-cyan-700 font-semibold rounded-md hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-cyan-600 transition-colors"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    )}
+                    <div className="flex-1 min-h-0 relative flex flex-col pl-4 pt-4 pb-4 pr-[52px]">
+                        <Viewer
+                            modelUrl={currentScan?.modelUrl}
+                            onModelUpload={handleModelUpload}
+                            annotations={currentScan?.threeDAnnotations}
+                            onAnnotationAdd={handleThreeDAnnotationAdd}
+                            onPointCreated={handleThreeDPointCreated}
+                            highlightedPointIds={glbHighlightedPointIds}
+                            onAnnotationSelect={handleThreeDAnnotationSelect}
+                            onAnnotationDelete={handleThreeDAnnotationDelete}
+                        />
+                    </div>
+                    <AnnotationsPanel
+                        selectedFileName={`3D Model (${currentScanDate})`}
+                        annotations={glbFileAnnotations}
+                        onAddAnnotation={(title, description) => {
+                            const newAnnotation: Annotation = {
+                                id: Math.random().toString(36).substr(2, 9),
+                                fileId: glbFileId,
+                                title,
+                                description,
+                                linkedThreeDPointIds: pendingThreeDPointId ? [pendingThreeDPointId] : undefined
+                            };
+                            setFileAnnotations(prev => [...prev, newAnnotation]);
+                            setPendingThreeDPointId(null);
+                        }}
+                        onEditAnnotation={handleEditAnnotation}
+                        onDeleteAnnotation={handleDeleteAnnotation}
+                        isCollapsed={isAnnotationsPanelCollapsed}
+                        onToggleCollapse={() => setIsAnnotationsPanelCollapsed(!isAnnotationsPanelCollapsed)}
+                        height={annotationsPanelHeight}
+                        onHeightChange={setAnnotationsPanelHeight}
+                        isAdding={isAddingAnnotation}
+                        onIsAddingChange={setIsAddingAnnotation}
+                        selectedAnnotationIds={selectedAnnotationIds}
+                        onSelectedAnnotationIdsChange={setSelectedAnnotationIds}
+                        onAddRectangleToAnnotation={handleAddPointToAnnotation}
                     />
                 </div>
             );
@@ -2239,15 +2568,53 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
             case 'glb':
                 return (
-                    <div className="flex-1 pl-4 pt-4 pb-4 pr-[52px] overflow-hidden">
-                        <Viewer
-                            modelUrl={selectedCenterFile.url}
-                            onModelUpload={handleModelUpload}
-                            annotations={currentScan?.threeDAnnotations}
-                            onAnnotationAdd={handleThreeDAnnotationAdd}
-                            insights={currentScan?.insights}
-                            onAnnotationSelect={handleThreeDAnnotationSelect}
-                            onAnnotationDelete={handleThreeDAnnotationDelete}
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                        {/* Banner for adding multiple points */}
+                        {addingPointToAnnotationId && (
+                            <div className="bg-cyan-600 border-b border-cyan-700 px-4 py-3 flex items-center justify-between shadow-lg">
+                                <div className="flex flex-col">
+                                    <span className="text-white font-semibold text-sm">
+                                        Adding points to: {currentFileAnnotations.find(a => a.id === addingPointToAnnotationId)?.title || 'Annotation'}
+                                    </span>
+                                    <span className="text-cyan-100 text-xs">
+                                        Click on the 3D model to add points. Click Done when finished.
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => setAddingPointToAnnotationId(null)}
+                                    className="px-4 py-2 bg-white text-cyan-700 font-semibold rounded-md hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-cyan-600 transition-colors"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
+                        <div className="flex-1 min-h-0 relative flex flex-col pl-4 pt-4 pb-4 pr-[52px]">
+                            <Viewer
+                                modelUrl={selectedCenterFile.url}
+                                onModelUpload={handleModelUpload}
+                                annotations={currentScan?.threeDAnnotations}
+                                onAnnotationAdd={handleThreeDAnnotationAdd}
+                                onPointCreated={handleThreeDPointCreated}
+                                highlightedPointIds={highlightedThreeDPointIds}
+                                onAnnotationSelect={handleThreeDAnnotationSelect}
+                                onAnnotationDelete={handleThreeDAnnotationDelete}
+                            />
+                        </div>
+                        <AnnotationsPanel
+                            selectedFileName={selectedCenterFile.name}
+                            annotations={currentFileAnnotations}
+                            onAddAnnotation={handleAddAnnotation}
+                            onEditAnnotation={handleEditAnnotation}
+                            onDeleteAnnotation={handleDeleteAnnotation}
+                            isCollapsed={isAnnotationsPanelCollapsed}
+                            onToggleCollapse={() => setIsAnnotationsPanelCollapsed(!isAnnotationsPanelCollapsed)}
+                            height={annotationsPanelHeight}
+                            onHeightChange={setAnnotationsPanelHeight}
+                            isAdding={isAddingAnnotation}
+                            onIsAddingChange={setIsAddingAnnotation}
+                            selectedAnnotationIds={selectedAnnotationIds}
+                            onSelectedAnnotationIdsChange={setSelectedAnnotationIds}
+                            onAddRectangleToAnnotation={handleAddPointToAnnotation}
                         />
                     </div>
                 );
@@ -2373,25 +2740,75 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
     }, []);
 
-    // Debounced auto-save when scans/agentStates change
+    // Debounced auto-save when scans/agentStates/projectMasterFiles change
     const initializedRef = useRef(false);
     useEffect(() => {
         // mark initialized after initial project load
         initializedRef.current = true;
     }, [project.id]);
 
+    // Track serialized project master files
+    const [serializedProjectMasterFiles, setSerializedProjectMasterFiles] = useState<SerializableFile[]>([]);
+
+    // Serialize project master files when tree or files change
+    useEffect(() => {
+        const serializeProjectMaster = async () => {
+            // Get file nodes from the tree to get accurate paths
+            const fileNodes = flattenTree(projectMasterTree).filter(n => n.type === 'file' && n.file);
+            
+            if (fileNodes.length === 0) {
+                setSerializedProjectMasterFiles([]);
+                return;
+            }
+
+            try {
+                const serialized = await Promise.all(
+                    fileNodes.map(async (node) => {
+                        // Use path from tree node (which is updated on rename)
+                        return fileToSerializable(node.file!, node.path);
+                    })
+                );
+                setSerializedProjectMasterFiles(serialized);
+            } catch (error) {
+                console.error('Error serializing project master files:', error);
+            }
+        };
+        serializeProjectMaster();
+    }, [projectMasterTree]);
+
     useEffect(() => {
         if (!initializedRef.current) return;
         const timer = window.setTimeout(() => {
-            onSaveProject(scans, agentStates);
+            onSaveProject(scans, agentStates, serializedProjectMasterFiles.length > 0 ? serializedProjectMasterFiles : undefined);
         }, 500);
         return () => window.clearTimeout(timer);
-    }, [scans, agentStates, onSaveProject]);
+    }, [scans, agentStates, serializedProjectMasterFiles, onSaveProject]);
 
-    // Use current scan's file system tree for display
+    // Merge project-level Project Master with scan-specific files for display
     const displayedFileSystemTree = useMemo(() => {
-        return currentScanViewerState.fileSystemTree;
-    }, [currentScanViewerState.fileSystemTree]);
+        const scanTree = currentScanViewerState.fileSystemTree;
+        
+        // If no project master files, just return scan tree
+        if (projectMasterTree.length === 0) {
+            return scanTree;
+        }
+        
+        // Create a "Project Master" folder node containing project-level files
+        const projectMasterFolder: FileSystemNode = {
+            id: 'project-master-root',
+            name: 'Project Master',
+            type: 'folder',
+            path: 'Project Master',
+            expanded: true,
+            children: projectMasterTree
+        };
+        
+        // Filter out any existing "Project Master" folder from scan tree (legacy data)
+        const filteredScanTree = scanTree.filter(node => node.name !== 'Project Master');
+        
+        // Return merged tree with Project Master at the top
+        return [projectMasterFolder, ...filteredScanTree];
+    }, [currentScanViewerState.fileSystemTree, projectMasterTree]);
 
     return (
         <div className="h-screen w-screen bg-[#0f1419] flex flex-col text-white">
@@ -2521,6 +2938,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     onUploadDeviation={handleUploadDeviation}
                                     onUploadClash={handleUploadClash}
                                     onUploadProgress={handleUploadProgress}
+                                    annotationCountByFileId={annotationCountByFileId}
                                 />
                             )}
                         </div>

@@ -19,6 +19,8 @@ interface FileTreeNodeProps {
   onDelete: (node: FileSystemNode) => void;
   onMove: (nodeId: string, targetId: string | undefined) => void;
   onOpenFile: (node: FileSystemNode) => void;
+  annotationCount?: number;
+  annotationCountByFileId?: Record<string, number>;
 }
 
 const FileTreeNode: React.FC<FileTreeNodeProps> = ({
@@ -30,7 +32,9 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
   onRename,
   onDelete,
   onMove,
-  onOpenFile
+  onOpenFile,
+  annotationCount,
+  annotationCountByFileId
 }) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
@@ -158,6 +162,13 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
           )}
         </div>
 
+        {/* Annotation Count Badge - Left of icon */}
+        {annotationCount !== undefined && annotationCount > 0 && (
+          <span className="bg-gray-800 text-gray-400 text-[10px] px-1.5 py-0.5 rounded-full">
+            {annotationCount}
+          </span>
+        )}
+
         {/* File/Folder Icon */}
         {getFileIcon()}
 
@@ -219,6 +230,8 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
               onDelete={onDelete}
               onMove={onMove}
               onOpenFile={onOpenFile}
+              annotationCount={annotationCountByFileId?.[child.id]}
+              annotationCountByFileId={annotationCountByFileId}
             />
           ))}
         </div>

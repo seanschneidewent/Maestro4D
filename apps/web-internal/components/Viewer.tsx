@@ -3,14 +3,15 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeIcon, PencilIcon, CloseIcon, TrashIcon } from './Icons';
-import { ThreeDAnnotation, ThreeDPoint, Insight } from '../types';
+import { ThreeDAnnotation, ThreeDPoint } from '../types';
 
 interface ViewerProps {
   modelUrl?: string;
   onModelUpload?: (url: string) => void;
   annotations?: ThreeDAnnotation[];
   onAnnotationAdd?: (annotation: ThreeDAnnotation) => void;
-  insights?: Insight[];
+  onPointCreated?: (pointId: string) => void;
+  highlightedPointIds?: string[];
   onAnnotationSelect?: (annotationId: string | null) => void;
   onAnnotationDelete?: (annotationId: string) => void;
 }
@@ -20,7 +21,8 @@ const Viewer: React.FC<ViewerProps> = ({
     onModelUpload, 
     annotations = [], 
     onAnnotationAdd, 
-    insights = [],
+    onPointCreated,
+    highlightedPointIds = [],
     onAnnotationSelect,
     onAnnotationDelete
 }) => {
@@ -32,8 +34,6 @@ const Viewer: React.FC<ViewerProps> = ({
   
   // Editing state
   const [isEditing, setIsEditing] = useState(false);
-  const [showInsightModal, setShowInsightModal] = useState(false);
-  const [tempAnnotation, setTempAnnotation] = useState<Partial<ThreeDAnnotation> | null>(null);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [annotationsToDelete, setAnnotationsToDelete] = useState<string[]>([]);
@@ -83,8 +83,9 @@ const Viewer: React.FC<ViewerProps> = ({
     // Add annotations
     annotations.forEach(ann => {
         const isSelected = ann.id === selectedAnnotationId;
+        const isHighlighted = highlightedPointIds.includes(ann.id);
         const isMarkedForDeletion = annotationsToDelete.includes(ann.id);
-        const color = isMarkedForDeletion ? '#ef4444' : (isSelected ? '#ffff00' : ann.color); // Red if deleting, Yellow if selected
+        const color = isMarkedForDeletion ? '#ef4444' : ((isSelected || isHighlighted) ? '#ffff00' : ann.color); // Red if deleting, Yellow if selected/highlighted
 
         // Check if it's a point annotation (start === end)
         const isPointAnnotation = ann.start.x === ann.end.x && ann.start.y === ann.end.y && ann.start.z === ann.end.z;
@@ -121,7 +122,7 @@ const Viewer: React.FC<ViewerProps> = ({
             annotationsGroupRef.current?.add(endMarker);
         }
     });
-  }, [annotations, modelLoaded, selectedAnnotationId, annotationsToDelete]);
+  }, [annotations, modelLoaded, selectedAnnotationId, highlightedPointIds, annotationsToDelete]);
 
   // Preview line logic removed - no longer needed for single-point annotations
 
@@ -181,14 +182,18 @@ const Viewer: React.FC<ViewerProps> = ({
         const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
 
         // Create point annotation immediately (start === end)
-        const newAnnotation: Partial<ThreeDAnnotation> = {
+        const newAnnotation: ThreeDAnnotation = {
             id: Math.random().toString(36).substring(2, 10),
             start: clickedPoint,
             end: clickedPoint, // Same point for point annotation
-            color: '#ff0000' // Default color
+            color: '#00bcd4' // Cyan color to match the UI theme
         };
-        setTempAnnotation(newAnnotation);
-        setShowInsightModal(true);
+        
+        // Add the annotation to the scene
+        onAnnotationAdd?.(newAnnotation);
+        
+        // Notify parent that a point was created (for linking with AnnotationsPanel)
+        onPointCreated?.(newAnnotation.id);
         
         // Deselect any annotation when creating new one
         setSelectedAnnotationId(null);
@@ -197,20 +202,6 @@ const Viewer: React.FC<ViewerProps> = ({
   };
 
   // Mouse move handler removed - no longer needed for single-point annotations
-
-  const handleInsightSelect = (insightId: string) => {
-      if (tempAnnotation && onAnnotationAdd) {
-          onAnnotationAdd({
-              id: tempAnnotation.id!,
-              start: tempAnnotation.start!,
-              end: tempAnnotation.end!,
-              color: tempAnnotation.color || '#ff0000',
-              linkedInsightId: insightId
-          });
-      }
-      setShowInsightModal(false);
-      setTempAnnotation(null);
-  };
 
   const handleDeleteSelected = () => {
       if (selectedAnnotationId && onAnnotationDelete) {
@@ -464,35 +455,6 @@ const Viewer: React.FC<ViewerProps> = ({
                  </button>
             </div>
         </>
-      )}
-
-      {/* Insight Selection Modal */}
-      {showInsightModal && (
-          <div className="absolute inset-0 bg-gray-900/90 flex items-center justify-center z-50 p-4">
-              <div className="bg-gray-800 rounded-lg border border-gray-700 shadow-xl w-full max-w-md flex flex-col max-h-[80vh]">
-                  <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                      <h3 className="text-lg font-semibold text-white">Link to Insight</h3>
-                      <button onClick={() => { setShowInsightModal(false); setTempAnnotation(null); }} className="text-gray-400 hover:text-white">
-                          <CloseIcon className="h-5 w-5" />
-                      </button>
-                  </div>
-                  <div className="p-4 overflow-y-auto flex-1 space-y-2">
-                      <p className="text-sm text-gray-400 mb-4">Select an insight to attach this annotation to:</p>
-                      {insights.length > 0 ? insights.map(insight => (
-                          <button
-                            key={insight.id}
-                            onClick={() => handleInsightSelect(insight.id)}
-                            className="w-full text-left p-3 rounded-md bg-gray-700 hover:bg-gray-600 transition-colors border border-transparent hover:border-cyan-500"
-                          >
-                              <div className="text-sm font-medium text-white">{insight.title}</div>
-                              <div className="text-xs text-gray-400 truncate">{insight.summary}</div>
-                          </button>
-                      )) : (
-                          <div className="text-center text-gray-500 py-4">No insights available.</div>
-                      )}
-                  </div>
-              </div>
-          </div>
       )}
 
       {(!modelLoaded && !isLoading) && (

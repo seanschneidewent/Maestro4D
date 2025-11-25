@@ -182,16 +182,17 @@ export const updateNodeInTree = (nodes: FileSystemNode[], id: string, updates: P
 };
 
 /**
- * Removes a node from the tree.
+ * Removes a node from the tree (immutable - does not mutate original nodes).
  */
 export const removeNodeFromTree = (nodes: FileSystemNode[], id: string): FileSystemNode[] => {
-  return nodes.filter(node => {
-    if (node.id === id) return false;
-    if (node.children) {
-      node.children = removeNodeFromTree(node.children, id);
-    }
-    return true;
-  });
+  return nodes
+    .filter(node => node.id !== id)
+    .map(node => {
+      if (node.children) {
+        return { ...node, children: removeNodeFromTree(node.children, id) };
+      }
+      return node;
+    });
 };
 
 /**

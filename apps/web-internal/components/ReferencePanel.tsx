@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { analyzeDeviationReport } from '../utils/gemini';
 import FolderTreeView from './FolderTreeView';
+import FileTreeNode from './FileTreeNode';
 
 type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
 
@@ -32,6 +33,8 @@ interface ReferencePanelProps {
   onUploadDeviation?: (file: File) => void;
   onUploadClash?: (file: File) => void;
   onUploadProgress?: (file: File) => void;
+  // Annotation counts by file ID
+  annotationCountByFileId?: Record<string, number>;
   
   // Legacy props (keeping for compatibility during transition if needed, but mainly replaced)
   centerViewerFiles?: Array<{ name: string; url: string; file: File }>;
@@ -73,6 +76,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   onUploadDeviation,
   onUploadClash,
   onUploadProgress,
+  annotationCountByFileId,
   centerViewerFiles = [],
   selectedFileIndex = 0,
   onSelectFile,
@@ -102,6 +106,9 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   
   // Separate ref for folder input
   const folderInputRef = useRef<HTMLInputElement>(null);
+  
+  // Ref for Project Master folder upload in Master tab
+  const projectMasterInputRef = useRef<HTMLInputElement>(null);
 
   // Upload handlers
   const handleProgressUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,6 +158,39 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
       folderInputRef.current.value = '';
     }
   };
+
+  // Handler for Project Master upload in Master tab
+  const handleProjectMasterUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0 && onUploadProjectMaster) {
+      onUploadProjectMaster(Array.from(e.target.files));
+    }
+    if (projectMasterInputRef.current) {
+      projectMasterInputRef.current.value = '';
+    }
+  };
+
+  // Helper to find Project Master folder and its contents
+  const projectMasterFolder = fileSystemTree.find(node => node.name === 'Project Master' && node.type === 'folder');
+  const projectMasterNodes = projectMasterFolder ? [projectMasterFolder] : [];
+  const hasProjectMasterFiles = projectMasterFolder && projectMasterFolder.children && projectMasterFolder.children.length > 0;
+
+  // Helper to find node by ID within Project Master tree
+  const findNodeInTree = (nodesList: FileSystemNode[], id: string): FileSystemNode | undefined => {
+    for (const node of nodesList) {
+      if (node.id === id) return node;
+      if (node.children) {
+        const found = findNodeInTree(node.children, id);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+
+  // Get active folder ID within Project Master for creating new folders
+  const selectedNodeInProjectMaster = selectedNodeId ? findNodeInTree(projectMasterNodes, selectedNodeId) : undefined;
+  const projectMasterActiveFolderId = selectedNodeInProjectMaster?.type === 'folder' 
+    ? selectedNodeInProjectMaster.id 
+    : selectedNodeInProjectMaster?.parentId || projectMasterFolder?.id;
 
   // Delete handler for allData files
   const handleDeleteAllDataFile = (index: number) => {
@@ -384,7 +424,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   return (
     <div className="w-full bg-gradient-to-b from-gray-900 via-gray-900 to-black backdrop-blur-xl p-5 flex flex-col h-full border-l border-white/5">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">Reference</h2>
+        <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400 tracking-tight">Project Raw Data</h2>
       </div>
 
       <div className="flex p-1 bg-black/40 rounded-lg border border-white/5 mb-6">
@@ -396,9 +436,9 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
               ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-900/20'
               : 'text-gray-400 hover:text-white hover:bg-white/5'
           }`}
-          aria-label="BIM Milestones"
+          aria-label="Master"
         >
-          BIM Milestones
+          Master
         </button>
         <button
           type="button"
@@ -408,10 +448,10 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
               ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-900/20'
               : 'text-gray-400 hover:text-white hover:bg-white/5'
           }`}
-          aria-label="List Data"
+          aria-label="Day"
           aria-pressed={isListDataActive}
         >
-          List Data
+          Day
         </button>
       </div>
 
@@ -429,7 +469,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                multiple
              />
              
-            {/* Folder Tree View */}
+            {/* Folder Tree View - excludes Project Master which is shown in Master tab */}
             <div className="flex-1">
                 <FolderTreeView 
                     nodes={fileSystemTree}
@@ -446,216 +486,83 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                     onUploadDeviation={onUploadDeviation}
                     onUploadClash={onUploadClash}
                     onUploadProgress={onUploadProgress}
+                    onUploadFiles={onAddFile}
+                    excludeProjectMaster={true}
+                    annotationCountByFileId={annotationCountByFileId}
                 />
             </div>
           </div>
         ) : (
-          <>
-            {/* Total Tasks Card */}
-            <div className="group relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-5 rounded-xl border border-white/10 hover:border-cyan-500/30 transition-all duration-300 overflow-hidden hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 group-hover:text-cyan-400 transition-colors">Total Tasks</h3>
-              <div className="flex items-center gap-6">
-                {/* Donut Chart */}
-                <div className="flex-shrink-0 relative">
-                  <div className="absolute inset-0 rounded-full blur-md opacity-50" style={{ background: gradient }}></div>
-                  <div className="relative w-24 h-24">
-                    <div
-                      className="absolute inset-0 rounded-full border-[6px] border-transparent"
-                      style={{ background: `${gradient} border-box`, mask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)' }}
+          <div className="flex flex-col h-full">
+            {/* Hidden Project Master folder input */}
+            <input
+              ref={projectMasterInputRef}
+              type="file"
+              multiple
+              webkitdirectory=""
+              directory=""
+              onChange={handleProjectMasterUpload}
+              className="hidden"
+            />
+
+            {/* Toolbar */}
+            {projectMasterFolder && (
+              <div className="flex items-center gap-2 mb-4 px-1">
+                <button
+                  onClick={() => onCreateFolder && onCreateFolder(projectMasterActiveFolderId)}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg border border-white/5 transition-all text-xs font-bold uppercase tracking-wide"
+                  title={projectMasterActiveFolderId && projectMasterActiveFolderId !== projectMasterFolder?.id ? "New Folder in Selection" : "New Folder in Project Master"}
+                >
+                  <FolderIcon className="h-4 w-4" />
+                  <span>New Folder</span>
+                </button>
+              </div>
+            )}
+
+            {/* Project Master Tree Area */}
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-[200px] rounded-xl">
+              {projectMasterNodes.length === 0 || !hasProjectMasterFiles ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-gray-800 rounded-xl text-gray-500">
+                  <DocumentIcon className="h-12 w-12 mb-4 opacity-20" />
+                  <p className="text-sm font-medium mb-1">No Project Master files yet</p>
+                  <p className="text-xs text-gray-600 mb-4">Upload folders or files to get started</p>
+                  
+                  {/* Project Master Upload Button */}
+                  <button
+                    onClick={() => projectMasterInputRef.current?.click()}
+                    className="w-full max-w-sm py-4 px-4 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-cyan-900/30 hover:to-blue-900/30 border border-dashed border-gray-700 hover:border-cyan-500/50 rounded-xl group transition-all duration-300 flex items-center gap-4 shadow-lg"
+                  >
+                    <div className="p-3 bg-gray-800 rounded-lg group-hover:bg-cyan-900/30 group-hover:scale-110 transition-all duration-300">
+                      <DocumentIcon className="h-6 w-6 text-cyan-400" />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="text-sm font-bold text-gray-200 group-hover:text-cyan-400 transition-colors">Project Master</h3>
+                      <p className="text-xs text-gray-500 group-hover:text-gray-400">Upload folders or files - plans, contracts, reports</p>
+                    </div>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-0.5 pb-4">
+                  {projectMasterNodes.map(node => (
+                    <FileTreeNode
+                      key={node.id}
+                      node={node}
+                      level={0}
+                      selectedId={selectedNodeId}
+                      onSelect={onSelectNode || (() => {})}
+                      onToggleExpand={onToggleExpand || (() => {})}
+                      onRename={onRenameNode || (() => {})}
+                      onDelete={onDeleteNode || (() => {})}
+                      onMove={onMoveNode || (() => {})}
+                      onOpenFile={onOpenFile || (() => {})}
+                      annotationCount={annotationCountByFileId?.[node.id]}
+                      annotationCountByFileId={annotationCountByFileId}
                     />
-                    <div className="absolute inset-0 rounded-full" style={{ background: gradient, mask: 'radial-gradient(transparent 60%, black 61%)' }} />
-                    
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-3xl font-black text-white drop-shadow-lg">{totalTasks}</span>
-                    </div>
-                  </div>
+                  ))}
                 </div>
-                {/* Severity Counts */}
-                <div className="flex-1 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
-                      <span className="text-sm font-medium text-gray-400">Critical</span>
-                    </div>
-                    <span className="text-sm font-bold text-white">{criticalCount}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]"></div>
-                      <span className="text-sm font-medium text-gray-400">High</span>
-                    </div>
-                    <span className="text-sm font-bold text-white">{highCount}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)]"></div>
-                      <span className="text-sm font-medium text-gray-400">Medium</span>
-                    </div>
-                    <span className="text-sm font-bold text-white">{mediumCount}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
-                      <span className="text-sm font-medium text-gray-400">Low</span>
-                    </div>
-                    <span className="text-sm font-bold text-white">{lowCount}</span>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
-
-            {/* Overall Job Progress Card */}
-            <div className="group relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-5 rounded-xl border border-white/10 hover:border-cyan-500/30 transition-all duration-300 overflow-hidden hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 group-hover:text-cyan-400 transition-colors">Overall Job Progress</h3>
-              <div className="mb-6">
-                <div className="flex justify-between items-end mb-3">
-                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Completion</span>
-                  <span className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">{progress}%</span>
-                </div>
-                <div className="w-full bg-gray-800/50 rounded-full h-2.5 overflow-hidden">
-                  <div 
-                    className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full rounded-full transition-all duration-500 shadow-[0_0_15px_rgba(6,182,212,0.5)]"
-                    style={{ width: `${progress}%` }}
-                  ></div>
-                </div>
-              </div>
-              <input
-                type="file"
-                accept="application/pdf"
-                ref={progressFileInputRef}
-                onChange={handleProgressUpload}
-                className="hidden"
-                aria-label="Upload progress report PDF"
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (reportFiles.progress && onViewReport) {
-                      onViewReport('progress', reportFiles.progress);
-                    }
-                  }}
-                  disabled={!reportFiles.progress}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition-all duration-300 ${
-                    reportFiles.progress
-                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/20 hover:shadow-cyan-900/40 hover:-translate-y-0.5'
-                      : 'bg-gray-800/50 border border-white/5 text-gray-500 cursor-not-allowed'
-                  }`}
-                  aria-label="View Progress Report"
-                >
-                  <DocumentIcon className="h-4 w-4" />
-                  <span>View Report</span>
-                </button>
-                <button
-                  onClick={handleProgressButtonClick}
-                  className={`p-2.5 rounded-lg transition-all duration-300 border ${
-                    reportFiles.progress
-                      ? 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700 hover:text-white hover:border-white/20'
-                      : 'bg-gray-800/50 border-transparent text-gray-600 hover:bg-gray-800 hover:text-cyan-400'
-                  }`}
-                  aria-label={reportFiles.progress ? 'Download Progress Report' : 'Upload Progress Report'}
-                >
-                  <ArrowDownTrayIcon className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Deviation Analysis Card */}
-            <div className="group relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-5 rounded-xl border border-white/10 hover:border-cyan-500/30 transition-all duration-300 overflow-hidden hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2 group-hover:text-cyan-400 transition-colors">Deviation Analysis</h3>
-              <p className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-white to-gray-400 mb-6">{summary.totalDeviations} <span className="text-lg font-medium text-gray-500">Deviations</span></p>
-              <input
-                type="file"
-                accept="application/pdf"
-                ref={deviationFileInputRef}
-                onChange={handleDeviationUpload}
-                className="hidden"
-                aria-label="Upload deviation report PDF"
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (reportFiles.deviation && onViewReport) {
-                      onViewReport('deviation', reportFiles.deviation);
-                    }
-                  }}
-                  disabled={!reportFiles.deviation || isAnalyzing}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition-all duration-300 ${
-                    reportFiles.deviation
-                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/20 hover:shadow-cyan-900/40 hover:-translate-y-0.5'
-                      : 'bg-gray-800/50 border border-white/5 text-gray-500 cursor-not-allowed'
-                  }`}
-                  aria-label="View Deviation Report"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>Analyzing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <DocumentIcon className="h-4 w-4" />
-                      <span>View Report</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleDeviationButtonClick}
-                  className={`p-2.5 rounded-lg transition-all duration-300 border ${
-                    reportFiles.deviation
-                      ? 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700 hover:text-white hover:border-white/20'
-                      : 'bg-gray-800/50 border-transparent text-gray-600 hover:bg-gray-800 hover:text-cyan-400'
-                  }`}
-                  aria-label={reportFiles.deviation ? 'Download Deviation Report' : 'Upload Deviation Report'}
-                >
-                  <ArrowDownTrayIcon className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Clash Detection Card */}
-            <div className="group relative bg-gradient-to-br from-gray-800/40 to-gray-900/40 p-5 rounded-xl border border-white/10 hover:border-cyan-500/30 transition-all duration-300 overflow-hidden hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2 group-hover:text-cyan-400 transition-colors">Clash Detection</h3>
-              <p className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-white to-gray-400 mb-6">{clashCount} <span className="text-lg font-medium text-gray-500">Clashes</span></p>
-              <input
-                type="file"
-                accept="application/pdf"
-                ref={clashFileInputRef}
-                onChange={handleClashUpload}
-                className="hidden"
-                aria-label="Upload clash report PDF"
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (reportFiles.clash && onViewReport) {
-                      onViewReport('clash', reportFiles.clash);
-                    }
-                  }}
-                  disabled={!reportFiles.clash}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition-all duration-300 ${
-                    reportFiles.clash
-                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-900/20 hover:shadow-cyan-900/40 hover:-translate-y-0.5'
-                      : 'bg-gray-800/50 border border-white/5 text-gray-500 cursor-not-allowed'
-                  }`}
-                  aria-label="View Clash Report"
-                >
-                  <DocumentIcon className="h-4 w-4" />
-                  <span>View Report</span>
-                </button>
-                <button
-                  onClick={handleClashButtonClick}
-                  className={`p-2.5 rounded-lg transition-all duration-300 border ${
-                    reportFiles.clash
-                      ? 'bg-gray-800 border-white/10 text-gray-300 hover:bg-gray-700 hover:text-white hover:border-white/20'
-                      : 'bg-gray-800/50 border-transparent text-gray-600 hover:bg-gray-800 hover:text-cyan-400'
-                  }`}
-                  aria-label={reportFiles.clash ? 'Download Clash Report' : 'Upload Clash Report'}
-                >
-                  <ArrowDownTrayIcon className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-          </>
+          </div>
         )}
       </div>
     </div>

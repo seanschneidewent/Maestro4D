@@ -19,6 +19,12 @@ interface FolderTreeViewProps {
   onUploadDeviation?: (file: File) => void;
   onUploadClash?: (file: File) => void;
   onUploadProgress?: (file: File) => void;
+  // Generic file upload to root level
+  onUploadFiles?: (files: File[]) => void;
+  // Option to exclude Project Master (shown in Master tab instead)
+  excludeProjectMaster?: boolean;
+  // Annotation counts by file ID
+  annotationCountByFileId?: Record<string, number>;
 }
 
 const FolderTreeView: React.FC<FolderTreeViewProps> = ({
@@ -35,7 +41,10 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
   onUploadModel,
   onUploadDeviation,
   onUploadClash,
-  onUploadProgress
+  onUploadProgress,
+  onUploadFiles,
+  excludeProjectMaster = false,
+  annotationCountByFileId
 }) => {
   const [isRootDragOver, setIsRootDragOver] = useState(false);
 
@@ -45,6 +54,7 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
   const deviationInputRef = useRef<HTMLInputElement>(null);
   const clashInputRef = useRef<HTMLInputElement>(null);
   const progressInputRef = useRef<HTMLInputElement>(null);
+  const genericFilesInputRef = useRef<HTMLInputElement>(null);
 
   const handleRootDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -109,6 +119,13 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
     if (e.target.value) e.target.value = '';
   };
 
+  const handleGenericFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0 && onUploadFiles) {
+      onUploadFiles(Array.from(e.target.files));
+    }
+    if (e.target.value) e.target.value = '';
+  };
+
   // Find selected node to know where to create new folder
   // Helper to find node by ID
   const findNode = (nodesList: FileSystemNode[], id: string): FileSystemNode | undefined => {
@@ -139,6 +156,11 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
     return folderHasFiles(folder.children, remainingPath);
   };
 
+  // Filter nodes to exclude Project Master if needed
+  const displayedNodes = excludeProjectMaster 
+    ? nodes.filter(node => node.name !== 'Project Master')
+    : nodes;
+
   // Check each category
   const hasProjectMasterFiles = folderHasFiles(nodes, ['Project Master']);
   const hasModelFiles = folderHasFiles(nodes, ['Models']);
@@ -146,7 +168,9 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
   const hasClashFiles = folderHasFiles(nodes, ['3DR Reports', 'Clash']);
   const hasProgressFiles = folderHasFiles(nodes, ['3DR Reports', 'Progress']);
 
-  const showAnyButtons = !hasProjectMasterFiles || !hasModelFiles || !hasDeviationFiles || !hasClashFiles || !hasProgressFiles;
+  // When excluding Project Master, don't show its button here
+  const showProjectMasterButton = !excludeProjectMaster && !hasProjectMasterFiles;
+  const showAnyButtons = showProjectMasterButton || !hasModelFiles || !hasDeviationFiles || !hasClashFiles || !hasProgressFiles;
 
   return (
     <div className="flex flex-col h-full">
@@ -160,6 +184,16 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
           <FolderIcon className="h-4 w-4" />
           <span>New Folder</span>
         </button>
+        {onUploadFiles && (
+          <button
+            onClick={() => genericFilesInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg border border-white/5 transition-all text-xs font-bold uppercase tracking-wide"
+            title="Add Files to Root"
+          >
+            <PlusIcon className="h-4 w-4" />
+            <span>Add Files</span>
+          </button>
+        )}
       </div>
 
       {/* Hidden Inputs */}
@@ -200,6 +234,13 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
         onChange={handleProgressUpload}
         className="hidden"
       />
+      <input
+        ref={genericFilesInputRef}
+        type="file"
+        multiple
+        onChange={handleGenericFilesUpload}
+        className="hidden"
+      />
 
       {/* Tree Area */}
       <div 
@@ -208,7 +249,7 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
         onDragLeave={handleRootDragLeave}
         onDrop={handleRootDrop}
       >
-        {nodes.length === 0 ? (
+        {displayedNodes.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-gray-800 rounded-xl text-gray-500">
             <DocumentIcon className="h-12 w-12 mb-4 opacity-20" />
             <p className="text-sm font-medium mb-1">No files yet</p>
@@ -216,7 +257,7 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
           </div>
         ) : (
           <div className="space-y-0.5 pb-4">
-            {nodes.map(node => (
+            {displayedNodes.map(node => (
               <FileTreeNode
                 key={node.id}
                 node={node}
@@ -228,6 +269,8 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
                 onDelete={onDeleteNode}
                 onMove={onMoveNode}
                 onOpenFile={onOpenFile}
+                annotationCount={annotationCountByFileId?.[node.id]}
+                annotationCountByFileId={annotationCountByFileId}
               />
             ))}
           </div>
@@ -237,7 +280,7 @@ const FolderTreeView: React.FC<FolderTreeViewProps> = ({
         {showAnyButtons && (
           <div className="border-t border-gray-800 pt-3 mt-2">
             <div className="flex flex-col gap-3 p-4">
-              {!hasProjectMasterFiles && (
+              {showProjectMasterButton && (
                 <button
                   onClick={() => projectMasterInputRef.current?.click()}
                   className="w-full py-4 px-4 bg-gradient-to-r from-gray-800 to-gray-900 hover:from-cyan-900/30 hover:to-blue-900/30 border border-dashed border-gray-700 hover:border-cyan-500/50 rounded-xl group transition-all duration-300 flex items-center gap-4 shadow-lg"
