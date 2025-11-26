@@ -3,10 +3,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeIcon, PencilIcon, CloseIcon, TrashIcon, PointCloudIcon, SettingsIcon } from './Icons';
-import { ThreeDAnnotation, ThreeDPoint } from '../types';
+import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig } from '../types';
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
-import SliceConfigModal from './SliceConfigModal';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
 
 const EMPTY_ARRAY: string[] = [];
@@ -42,7 +41,6 @@ const Viewer: React.FC<ViewerProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const lasInputRef = useRef<HTMLInputElement>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(!!modelUrl);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +50,6 @@ const Viewer: React.FC<ViewerProps> = ({
   const [showPointCloudSettings, setShowPointCloudSettings] = useState(false);
   const [showAnalysisTools, setShowAnalysisTools] = useState(false);
   const [showFloorPlanResults, setShowFloorPlanResults] = useState(false);
-  const [isSliceModalOpen, setIsSliceModalOpen] = useState(false);
   
   // Point cloud settings state (placeholder values)
   const [pointSize, setPointSize] = useState(1.0);
@@ -60,11 +57,6 @@ const Viewer: React.FC<ViewerProps> = ({
   const [colorMode, setColorMode] = useState<'rgb' | 'elevation' | 'intensity' | 'classification'>('rgb');
   const [visiblePointCount] = useState(1850000);
   
-  // Slice config state (placeholder values)
-  const [sliceHeight, setSliceHeight] = useState(3.5);
-  const [sliceThickness, setSliceThickness] = useState(6);
-  const [isSlicePreviewEnabled, setIsSlicePreviewEnabled] = useState(true);
-  const [pointsInSlice] = useState(1234567);
   
   // Floor plan results state (placeholder values)
   const [floorPlanLayers, setFloorPlanLayers] = useState({
@@ -77,6 +69,17 @@ const Viewer: React.FC<ViewerProps> = ({
   // Analysis state
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeFeature, setActiveFeature] = useState<string | null>(null);
+  
+  // Slice box state for floor plan generation
+  const [isSliceBoxActive, setIsSliceBoxActive] = useState(false);
+  const [sliceBoxConfig, setSliceBoxConfig] = useState<SliceBoxConfig | null>(null);
+  const sliceBoxGroupRef = useRef<THREE.Group | null>(null);
+  const [draggingHandle, setDraggingHandle] = useState<{ type: 'corner' | 'edge'; index: number } | null>(null);
+  const sliceDragPlaneRef = useRef<THREE.Plane | null>(null);
+  const isSliceBoxEditingRef = useRef(false);
+  
+  // Slice box XZ movement state (WASD keys when selected)
+  const [isSliceSelectedForMove, setIsSliceSelectedForMove] = useState(false);
   
   // Editing state
   const [isEditing, setIsEditing] = useState(false);
@@ -280,6 +283,122 @@ const Viewer: React.FC<ViewerProps> = ({
 
   // Preview line logic removed - no longer needed for single-point annotations
 
+  // Helper to create slice box with handles
+  const createSliceBox = useCallback((config: SliceBoxConfig, isSelectedForMove: boolean = false): THREE.Group => {
+    const group = new THREE.Group();
+    group.userData = { type: 'slice-box' };
+    
+    // Scale thickness from inches to model units (assuming model is in feet, 6 inches = 0.5 feet)
+    const thicknessFeet = config.thicknessInches / 12;
+    const scaledThickness = thicknessFeet * originalScaleFactorRef.current;
+    
+    // Use different colors/opacity when selected for XZ movement
+    const boxColor = isSelectedForMove ? 0xff9800 : 0x00bcd4; // Orange when selected, cyan otherwise
+    const boxOpacity = isSelectedForMove ? 0.4 : 0.25;
+    const wireframeColor = isSelectedForMove ? 0xffb74d : 0x00bcd4;
+    
+    // Create semi-transparent box mesh
+    const boxGeometry = new THREE.BoxGeometry(
+      config.halfExtents.x * 2,
+      scaledThickness,
+      config.halfExtents.z * 2
+    );
+    const boxMaterial = new THREE.MeshBasicMaterial({
+      color: boxColor,
+      transparent: true,
+      opacity: boxOpacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const boxMesh = new THREE.Mesh(boxGeometry, boxMaterial);
+    boxMesh.userData = { type: 'slice-box-mesh' };
+    group.add(boxMesh);
+    
+    // Create wireframe outline
+    const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
+    const edgesMaterial = new THREE.LineBasicMaterial({ color: wireframeColor, linewidth: 2 });
+    const wireframe = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+    wireframe.userData = { type: 'slice-box-wireframe' };
+    group.add(wireframe);
+    
+    // Create corner handles (8 corners of the box)
+    const cornerPositions = [
+      [-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1],  // Bottom corners
+      [-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1],      // Top corners
+    ];
+    
+    const handleGeometry = new THREE.SphereGeometry(0.015, 16, 16);
+    const handleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const hoverMaterial = new THREE.MeshBasicMaterial({ color: 0xff9800 });
+    
+    cornerPositions.forEach((pos, index) => {
+      const handle = new THREE.Mesh(handleGeometry, handleMaterial.clone());
+      handle.position.set(
+        pos[0] * config.halfExtents.x,
+        pos[1] * scaledThickness / 2,
+        pos[2] * config.halfExtents.z
+      );
+      handle.userData = { type: 'slice-handle', handleType: 'corner', handleIndex: index };
+      group.add(handle);
+    });
+    
+    // Create edge handles (4 edges on the horizontal plane - for adjusting width/depth)
+    const edgePositions = [
+      [0, 0, -1],  // Front edge center
+      [1, 0, 0],   // Right edge center
+      [0, 0, 1],   // Back edge center
+      [-1, 0, 0],  // Left edge center
+    ];
+    
+    const edgeHandleGeometry = new THREE.SphereGeometry(0.012, 16, 16);
+    const edgeHandleMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
+    
+    edgePositions.forEach((pos, index) => {
+      const handle = new THREE.Mesh(edgeHandleGeometry, edgeHandleMaterial.clone());
+      handle.position.set(
+        pos[0] * config.halfExtents.x,
+        0,
+        pos[2] * config.halfExtents.z
+      );
+      handle.userData = { type: 'slice-handle', handleType: 'edge', handleIndex: index };
+      group.add(handle);
+    });
+    
+    // Apply rotation and position
+    group.rotation.set(config.rotation.x, config.rotation.y, config.rotation.z);
+    group.position.set(config.center.x, config.center.y, config.center.z);
+    
+    return group;
+  }, []);
+
+  // Update slice box when config changes or selection state changes
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    
+    // Remove existing slice box
+    if (sliceBoxGroupRef.current) {
+      sceneRef.current.remove(sliceBoxGroupRef.current);
+      sliceBoxGroupRef.current.traverse((child) => {
+        if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => m.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      });
+      sliceBoxGroupRef.current = null;
+    }
+    
+    // Create new slice box if active
+    if (isSliceBoxActive && sliceBoxConfig) {
+      const sliceBoxGroup = createSliceBox(sliceBoxConfig, isSliceSelectedForMove);
+      sceneRef.current.add(sliceBoxGroup);
+      sliceBoxGroupRef.current = sliceBoxGroup;
+    }
+  }, [isSliceBoxActive, sliceBoxConfig, createSliceBox, isSliceSelectedForMove]);
+
   // Helper to create/update temporary start marker for measurements
   const updateTempMarker = (point: ThreeDPoint | null) => {
     // Remove existing temp marker
@@ -301,6 +420,129 @@ const Viewer: React.FC<ViewerProps> = ({
       tempMarkerRef.current = marker;
     }
   };
+
+  // Handle slice box handle dragging
+  const handleSliceBoxMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSliceBoxActive || !sliceBoxGroupRef.current || !cameraRef.current) return false;
+    
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+    
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    
+    mouseRef.current.set(x, y);
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // Check for handle hits
+    const handleIntersects = raycasterRef.current.intersectObject(sliceBoxGroupRef.current, true);
+    const handleHit = handleIntersects.find(i => i.object.userData?.type === 'slice-handle');
+    
+    if (handleHit && event.ctrlKey) {
+      const { handleType, handleIndex } = handleHit.object.userData;
+      setDraggingHandle({ type: handleType, index: handleIndex });
+      
+      // Create a plane perpendicular to the camera for dragging
+      const cameraDirection = new THREE.Vector3();
+      cameraRef.current.getWorldDirection(cameraDirection);
+      sliceDragPlaneRef.current = new THREE.Plane().setFromNormalAndCoplanarPoint(
+        cameraDirection.negate(),
+        handleHit.point
+      );
+      
+      // Disable orbit controls during handle drag
+      if (controlsRef.current) {
+        controlsRef.current.enabled = false;
+      }
+      
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    
+    return false;
+  }, [isSliceBoxActive]);
+
+  const handleSliceBoxMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!sliceBoxConfig || !cameraRef.current) return;
+    
+    // Handle handle dragging
+    if (!draggingHandle || !sliceDragPlaneRef.current) return;
+    
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    
+    mouseRef.current.set(x, y);
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // Find intersection with the drag plane
+    const intersection = new THREE.Vector3();
+    raycasterRef.current.ray.intersectPlane(sliceDragPlaneRef.current, intersection);
+    
+    if (!intersection) return;
+    
+    // Transform intersection to local slice box space
+    const localPoint = intersection.clone();
+    const sliceBoxGroup = sliceBoxGroupRef.current;
+    if (sliceBoxGroup) {
+      sliceBoxGroup.worldToLocal(localPoint);
+    }
+    
+    // Update config based on which handle is being dragged
+    const newConfig = { ...sliceBoxConfig };
+    
+    if (draggingHandle.type === 'corner') {
+      // Corner handles adjust the half-extents
+      const cornerIndex = draggingHandle.index;
+      // Map corner index to which extents to adjust
+      const xSign = (cornerIndex % 4 < 2) ? (cornerIndex % 2 === 0 ? -1 : 1) : (cornerIndex % 2 === 0 ? 1 : -1);
+      const zSign = cornerIndex % 4 < 2 ? -1 : 1;
+      
+      // Clamp to minimum size
+      const minExtent = 0.05;
+      newConfig.halfExtents = {
+        x: Math.max(minExtent, Math.abs(localPoint.x)),
+        y: newConfig.halfExtents.y,
+        z: Math.max(minExtent, Math.abs(localPoint.z)),
+      };
+    } else if (draggingHandle.type === 'edge') {
+      // Edge handles adjust one dimension at a time
+      const edgeIndex = draggingHandle.index;
+      const minExtent = 0.05;
+      
+      if (edgeIndex === 0 || edgeIndex === 2) {
+        // Front/back edges adjust Z extent
+        newConfig.halfExtents = {
+          ...newConfig.halfExtents,
+          z: Math.max(minExtent, Math.abs(localPoint.z)),
+        };
+      } else {
+        // Left/right edges adjust X extent
+        newConfig.halfExtents = {
+          ...newConfig.halfExtents,
+          x: Math.max(minExtent, Math.abs(localPoint.x)),
+        };
+      }
+    }
+    
+    setSliceBoxConfig(newConfig);
+  }, [draggingHandle, sliceBoxConfig]);
+
+  const handleSliceBoxMouseUp = useCallback(() => {
+    // Clear handle dragging state
+    if (draggingHandle) {
+      setDraggingHandle(null);
+      sliceDragPlaneRef.current = null;
+      
+      // Re-enable orbit controls only if Ctrl is not still held
+      if (controlsRef.current && !isSliceBoxEditingRef.current) {
+        controlsRef.current.enabled = true;
+      }
+    }
+  }, [draggingHandle]);
 
   // Handle left-click on canvas (selection, delete mode, measurement, and Ctrl+Click annotation placement)
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -374,6 +616,19 @@ const Viewer: React.FC<ViewerProps> = ({
         return;
     }
     
+    // Exit slice XZ move mode if clicking outside the slice box
+    if (isSliceSelectedForMove && isSliceBoxActive && sliceBoxGroupRef.current) {
+        const sliceIntersects = raycasterRef.current.intersectObject(sliceBoxGroupRef.current, true);
+        const sliceMeshHit = sliceIntersects.find(i => 
+            i.object.userData?.type === 'slice-box-mesh' || 
+            i.object.userData?.type === 'slice-handle'
+        );
+        
+        if (!sliceMeshHit) {
+            setIsSliceSelectedForMove(false);
+        }
+    }
+    
     // Check for annotation clicks (selection or delete mode toggle)
     const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
     if (annotationIntersects.length > 0) {
@@ -425,7 +680,7 @@ const Viewer: React.FC<ViewerProps> = ({
     }
   };
 
-  // Handle double-click to enter/exit measurement point edit mode
+  // Handle double-click to enter/exit measurement point edit mode or slice XZ move mode
   const handleCanvasDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!cameraRef.current || !annotationsGroupRef.current) return;
     
@@ -440,6 +695,24 @@ const Viewer: React.FC<ViewerProps> = ({
 
     mouseRef.current.set(x, y);
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // Check for slice box mesh hits when slice box is active
+    if (isSliceBoxActive && sliceBoxGroupRef.current) {
+        const sliceIntersects = raycasterRef.current.intersectObject(sliceBoxGroupRef.current, true);
+        const sliceMeshHit = sliceIntersects.find(i => i.object.userData?.type === 'slice-box-mesh');
+        
+        if (sliceMeshHit) {
+            // Toggle slice XZ move mode
+            setIsSliceSelectedForMove(prev => !prev);
+            return;
+        }
+        
+        // Double-clicked elsewhere while slice was selected - deselect it
+        if (isSliceSelectedForMove) {
+            setIsSliceSelectedForMove(false);
+            return;
+        }
+    }
     
     // Check for measurement marker hits
     const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
@@ -475,6 +748,11 @@ const Viewer: React.FC<ViewerProps> = ({
 
   // Handle mouse down for starting drag on editing point
   const handleCanvasMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    // Check for slice box handle dragging first
+    if (handleSliceBoxMouseDown(event)) {
+      return;
+    }
+    
     if (!editingPoint || !cameraRef.current || !annotationsGroupRef.current) return;
     
     const rect = mountRef.current?.getBoundingClientRect();
@@ -510,6 +788,12 @@ const Viewer: React.FC<ViewerProps> = ({
 
   // Handle mouse move for dragging editing point along measurement line
   const handleCanvasMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // Handle slice box dragging first
+    if (draggingHandle) {
+      handleSliceBoxMouseMove(event);
+      return;
+    }
+    
     if (!isDraggingPoint || !editingPoint || !dragStartRef.current || !cameraRef.current) return;
     
     const annotation = annotations.find(a => a.id === editingPoint.annotationId);
@@ -588,6 +872,9 @@ const Viewer: React.FC<ViewerProps> = ({
 
   // Handle mouse up to finish dragging
   const handleCanvasMouseUp = useCallback(() => {
+    // Handle slice box dragging
+    handleSliceBoxMouseUp();
+    
     if (isDraggingRef.current) {
         setIsDraggingPoint(false);
         isDraggingRef.current = false;
@@ -597,25 +884,91 @@ const Viewer: React.FC<ViewerProps> = ({
             controlsRef.current.enabled = true;
         }
     }
-  }, []);
+  }, [handleSliceBoxMouseUp]);
 
   // Add global mouse up listener for drag end detection
   useEffect(() => {
-    const handleGlobalMouseUp = () => {
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+        // Handle slice box handle dragging
+        if (draggingHandle) {
+            setDraggingHandle(null);
+            sliceDragPlaneRef.current = null;
+        }
+        
         if (isDraggingRef.current) {
             setIsDraggingPoint(false);
             isDraggingRef.current = false;
             dragStartRef.current = null;
-            // Re-enable orbit controls after drag ends
-            if (controlsRef.current) {
-                controlsRef.current.enabled = true;
-            }
+        }
+        
+        // Re-enable orbit controls after any drag ends, but only if Ctrl is not held
+        // (if Ctrl is still held, keep controls disabled for slice box editing)
+        if (controlsRef.current && !controlsRef.current.enabled && !e.ctrlKey) {
+            controlsRef.current.enabled = true;
         }
     };
     
     window.addEventListener('mouseup', handleGlobalMouseUp);
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-  }, []);
+  }, [draggingHandle]);
+
+  // Ctrl key listener for slice box editing - disables navigation while Ctrl is held
+  // Attaches to renderer.domElement to intercept events before OrbitControls processes them
+  useEffect(() => {
+    if (!isSliceBoxActive) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' && controlsRef.current) {
+        controlsRef.current.enabled = false;
+        isSliceBoxEditingRef.current = true;
+      }
+    };
+    
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' && controlsRef.current && !draggingHandle) {
+        controlsRef.current.enabled = true;
+        isSliceBoxEditingRef.current = false;
+      }
+    };
+    
+    // Block OrbitControls by intercepting events on the renderer's canvas element
+    // OrbitControls attaches to renderer.domElement, so we attach with capture: true
+    // to intercept before it processes them
+    const rendererElement = rendererRef.current?.domElement;
+    
+    const blockOrbitControls = (e: Event) => {
+      // OrbitControls is already disabled via controlsRef.current.enabled = false
+      // when Ctrl is pressed. No need to stopPropagation as it blocks React handlers.
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    if (rendererElement) {
+      rendererElement.addEventListener('mousedown', blockOrbitControls, { capture: true });
+      rendererElement.addEventListener('mousemove', blockOrbitControls, { capture: true });
+      rendererElement.addEventListener('wheel', blockOrbitControls, { capture: true });
+      rendererElement.addEventListener('contextmenu', blockOrbitControls, { capture: true });
+    }
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      
+      if (rendererElement) {
+        rendererElement.removeEventListener('mousedown', blockOrbitControls, { capture: true });
+        rendererElement.removeEventListener('mousemove', blockOrbitControls, { capture: true });
+        rendererElement.removeEventListener('wheel', blockOrbitControls, { capture: true });
+        rendererElement.removeEventListener('contextmenu', blockOrbitControls, { capture: true });
+      }
+      
+      // Re-enable controls when slice box is deactivated
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
+      }
+      isSliceBoxEditingRef.current = false;
+    };
+  }, [isSliceBoxActive, draggingHandle]);
 
   const handleDeleteSelected = () => {
       if (selectedAnnotationId && onAnnotationDelete) {
@@ -673,9 +1026,65 @@ const Viewer: React.FC<ViewerProps> = ({
   // Handle Delete/Backspace key, Escape, and Arrow keys for point editing
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-        // Escape key - exit editing mode
-        if (e.key === 'Escape' && editingPoint) {
-            setEditingPoint(null);
+        // Escape key - exit editing mode or slice XZ move mode
+        if (e.key === 'Escape') {
+            if (isSliceSelectedForMove) {
+                setIsSliceSelectedForMove(false);
+                return;
+            }
+            if (editingPoint) {
+                setEditingPoint(null);
+                return;
+            }
+        }
+        
+        // WASD keys - move slice in XZ plane when selected for move
+        if (isSliceSelectedForMove && sliceBoxConfig && ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) {
+            e.preventDefault();
+            
+            const xzStep = 0.05; // Same step size as vertical movement
+            
+            setSliceBoxConfig(prev => {
+                if (!prev) return null;
+                const key = e.key.toLowerCase();
+                switch (key) {
+                    case 'w': // Forward (-Z)
+                        return { ...prev, center: { ...prev.center, z: prev.center.z - xzStep } };
+                    case 's': // Backward (+Z)
+                        return { ...prev, center: { ...prev.center, z: prev.center.z + xzStep } };
+                    case 'a': // Left (-X)
+                        return { ...prev, center: { ...prev.center, x: prev.center.x - xzStep } };
+                    case 'd': // Right (+X)
+                        return { ...prev, center: { ...prev.center, x: prev.center.x + xzStep } };
+                    default:
+                        return prev;
+                }
+            });
+            return;
+        }
+        
+        // Arrow keys - move/rotate slice box when active
+        if (isSliceBoxActive && sliceBoxConfig && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault();
+            
+            const verticalStep = 0.05; // ~0.6 inches in scaled units
+            const rotationStep = Math.PI / 36; // 5 degrees
+            
+            setSliceBoxConfig(prev => {
+                if (!prev) return null;
+                switch (e.key) {
+                    case 'ArrowUp':
+                        return { ...prev, center: { ...prev.center, y: prev.center.y + verticalStep } };
+                    case 'ArrowDown':
+                        return { ...prev, center: { ...prev.center, y: prev.center.y - verticalStep } };
+                    case 'ArrowLeft':
+                        return { ...prev, rotation: { ...prev.rotation, y: prev.rotation.y + rotationStep } };
+                    case 'ArrowRight':
+                        return { ...prev, rotation: { ...prev.rotation, y: prev.rotation.y - rotationStep } };
+                    default:
+                        return prev;
+                }
+            });
             return;
         }
         
@@ -752,7 +1161,7 @@ const Viewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete, editingPoint, annotations, onAnnotationUpdate, computePerpendicularBasis]);
+  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete, editingPoint, annotations, onAnnotationUpdate, computePerpendicularBasis, isSliceBoxActive, sliceBoxConfig, isSliceSelectedForMove]);
 
 
   useEffect(() => {
@@ -863,8 +1272,8 @@ const Viewer: React.FC<ViewerProps> = ({
     
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      // Safety check: ensure controls are enabled unless we're actively dragging a point
-      if (!isDraggingRef.current && !controls.enabled) {
+      // Safety check: ensure controls are enabled unless we're actively dragging a point or editing slice box
+      if (!isDraggingRef.current && !isSliceBoxEditingRef.current && !controls.enabled) {
         controls.enabled = true;
       }
       controls.update();
@@ -931,28 +1340,40 @@ const Viewer: React.FC<ViewerProps> = ({
     fileInputRef.current?.click();
   };
 
-  const handleLasUploadClick = () => {
-    lasInputRef.current?.click();
-  };
-
-  const handleLasFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      console.log('[Point Cloud] LAS file selected:', file.name);
-      console.log('[Point Cloud] File size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
-      // TODO: Agent 5 will implement actual point cloud loading
-      setContentType('pointcloud');
-    }
-    // Reset the input value to allow re-uploading the same file
-    if (event.target) {
-      event.target.value = '';
-    }
-  };
 
   // Analysis tool handlers
   const handleGenerateFloorPlan = () => {
-    console.log('[Floor Plan] Opening slice configuration modal');
-    setIsSliceModalOpen(true);
+    console.log('[Floor Plan] Activating slice box tool');
+    
+    // If already active, toggle off
+    if (isSliceBoxActive) {
+      setIsSliceBoxActive(false);
+      setSliceBoxConfig(null);
+      setIsSliceSelectedForMove(false);
+      return;
+    }
+    
+    // Initialize slice box centered on model bounds
+    if (modelRef.current) {
+      const box = new THREE.Box3().setFromObject(modelRef.current);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      
+      // Create initial slice box config
+      const initialConfig: SliceBoxConfig = {
+        center: { x: center.x, y: center.y, z: center.z },
+        halfExtents: { 
+          x: size.x * 0.4,  // Start with 80% of model width
+          y: 0,            // Ignored, thickness is used instead
+          z: size.z * 0.4, // Start with 80% of model depth
+        },
+        rotation: { x: 0, y: 0, z: 0 },
+        thicknessInches: 6, // Default 6 inches
+      };
+      
+      setSliceBoxConfig(initialConfig);
+      setIsSliceBoxActive(true);
+    }
   };
 
   const handleDetectStructure = () => {
@@ -979,20 +1400,6 @@ const Viewer: React.FC<ViewerProps> = ({
     }, 2000);
   };
 
-  const handleSliceGenerate = (config: { floorId: string; sliceHeight: number; sliceThickness: number }) => {
-    console.log('[Floor Plan] Generating with config:', config);
-    setIsSliceModalOpen(false);
-    setIsProcessing(true);
-    setActiveFeature('floor-plan');
-    // TODO: Agent 5 will implement actual floor plan generation
-    setTimeout(() => {
-      console.log('[Floor Plan] Generation complete (placeholder)');
-      setIsProcessing(false);
-      setActiveFeature(null);
-      setShowFloorPlanResults(true);
-    }, 2000);
-  };
-
   const handleLayerToggle = (layer: string, enabled: boolean) => {
     console.log(`[Floor Plan] Layer "${layer}" toggled:`, enabled);
     setFloorPlanLayers(prev => ({ ...prev, [layer]: enabled }));
@@ -1003,18 +1410,11 @@ const Viewer: React.FC<ViewerProps> = ({
     // TODO: Agent 6 will implement actual export functionality
   };
 
-  // Placeholder floors for slice config
-  const placeholderFloors = [
-    { id: 'floor-1', label: 'Floor 1 (Ground)', elevation: 0 },
-    { id: 'floor-2', label: 'Floor 2', elevation: 10 },
-    { id: 'floor-3', label: 'Floor 3', elevation: 20 },
-  ];
-
   return (
     <div className="w-full h-full flex flex-col relative">
       <div 
         ref={mountRef} 
-        className={`w-full h-full rounded-lg ${(isEditing || isMeasuring) ? 'cursor-crosshair' : editingPoint ? 'cursor-move' : 'cursor-default'}`}
+        className={`w-full h-full rounded-lg ${(isEditing || isMeasuring) ? 'cursor-crosshair' : (editingPoint || draggingHandle) ? 'cursor-move' : isSliceSelectedForMove ? 'cursor-grab' : isSliceBoxActive ? 'cursor-pointer' : 'cursor-default'}`}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDoubleClick}
         onMouseDown={handleCanvasMouseDown}
@@ -1032,14 +1432,6 @@ const Viewer: React.FC<ViewerProps> = ({
         className="hidden"
         aria-label="Upload GLB model"
       />
-      <input
-        type="file"
-        accept=".las,.laz,.e57,.ply,.xyz"
-        ref={lasInputRef}
-        onChange={handleLasFileChange}
-        className="hidden"
-        aria-label="Upload point cloud"
-      />
 
 
       {modelLoaded && !isLoading && (
@@ -1047,6 +1439,29 @@ const Viewer: React.FC<ViewerProps> = ({
             
              {/* Edit Mode Toggle, Measure & Delete Buttons */}
             <div className="absolute top-4 right-4 flex gap-2">
+                 <button
+                   onClick={() => {
+                     console.log('[GLB Viewer] Settings button clicked');
+                     setShowPointCloudSettings(!showPointCloudSettings);
+                   }}
+                   className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md transition-colors pointer-events-auto flex items-center gap-2 ${
+                     showPointCloudSettings ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
+                   }`}
+                 >
+                   <SettingsIcon className="h-4 w-4" />
+                   Settings
+                 </button>
+                 <button
+                   onClick={() => {
+                     console.log('[GLB Viewer] Analysis button clicked');
+                     setShowAnalysisTools(!showAnalysisTools);
+                   }}
+                   className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md transition-colors pointer-events-auto flex items-center gap-2 ${
+                     showAnalysisTools ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
+                   }`}
+                 >
+                   Analysis
+                 </button>
                  <button
                      onClick={handleToggleDeleteMode}
                      className={`px-4 py-2 backdrop-blur-sm border text-white text-sm font-semibold rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 transition-colors pointer-events-auto flex items-center gap-2 ${
@@ -1126,10 +1541,119 @@ const Viewer: React.FC<ViewerProps> = ({
                     }`}
                     aria-label={isEditing ? "Exit Edit Mode" : "Enter Edit Mode"}
                  >
-                    {isEditing ? <CloseIcon className="h-4 w-4" /> : <PencilIcon className="h-4 w-4" />}
-                    {isEditing ? 'Cancel Drawing' : 'Annotate'}
-                 </button>
+                   {isEditing ? <CloseIcon className="h-4 w-4" /> : <PencilIcon className="h-4 w-4" />}
+                   {isEditing ? 'Cancel Drawing' : 'Annotate'}
+                </button>
             </div>
+
+            {/* Settings Panel for GLB Viewer */}
+            {showPointCloudSettings && (
+              <PointCloudSettingsPanel
+                pointSize={pointSize}
+                onPointSizeChange={setPointSize}
+                pointBudget={pointBudget}
+                onPointBudgetChange={setPointBudget}
+                colorMode={colorMode}
+                onColorModeChange={(mode) => setColorMode(mode as typeof colorMode)}
+                visiblePointCount={visiblePointCount}
+                onClose={() => setShowPointCloudSettings(false)}
+              />
+            )}
+
+            {/* Analysis Tools Panel for GLB Viewer */}
+            {showAnalysisTools && (
+              <AnalysisToolsPanel
+                onGenerateFloorPlan={handleGenerateFloorPlan}
+                onDetectStructure={handleDetectStructure}
+                onAnalyzeLoadBearing={handleAnalyzeLoadBearing}
+                isProcessing={isProcessing}
+                activeFeature={activeFeature}
+              />
+            )}
+
+            {/* Floor Plan Results Panel for GLB Viewer */}
+            {showFloorPlanResults && (
+              <FloorPlanResultsPanel
+                svgContent=""
+                roomCount={8}
+                totalArea={2450}
+                layers={floorPlanLayers}
+                onLayerToggle={handleLayerToggle}
+                onExport={handleExport}
+                onClose={() => setShowFloorPlanResults(false)}
+              />
+            )}
+
+            {/* Slice Box Controls */}
+            {isSliceBoxActive && sliceBoxConfig && (
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700/50 rounded-xl px-6 py-4 pointer-events-auto">
+                {/* Thickness control */}
+                <div className="flex items-center gap-3">
+                  <label className="text-gray-400 text-sm whitespace-nowrap">Thickness:</label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="24"
+                    step="1"
+                    value={sliceBoxConfig.thicknessInches}
+                    onChange={(e) => {
+                      const thickness = parseInt(e.target.value);
+                      setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
+                    }}
+                    className="w-24 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                  />
+                  <span className="text-cyan-400 text-sm font-mono w-12">{sliceBoxConfig.thicknessInches}"</span>
+                </div>
+
+                {/* Divider */}
+                <div className="w-px h-8 bg-gray-700"></div>
+
+                {/* Instructions */}
+                <p className="text-gray-400 text-sm">
+                  {isSliceSelectedForMove 
+                    ? 'WASD to move XZ | ↑↓ height | Dbl-click/Esc to exit' 
+                    : 'Ctrl + drag handles to resize | Dbl-click to move XZ | ↑↓ height'}
+                </p>
+
+                {/* Divider */}
+                <div className="w-px h-8 bg-gray-700"></div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      console.log('[Floor Plan] Generating with slice box config:', sliceBoxConfig);
+                      setIsSliceBoxActive(false);
+                      setIsSliceSelectedForMove(false);
+                      setIsProcessing(true);
+                      setActiveFeature('floor-plan');
+                      // TODO: Implement actual floor plan generation with sliceBoxConfig
+                      setTimeout(() => {
+                        setIsProcessing(false);
+                        setActiveFeature(null);
+                        setShowFloorPlanResults(true);
+                      }, 2000);
+                    }}
+                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Generate
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsSliceBoxActive(false);
+                      setSliceBoxConfig(null);
+                      setIsSliceSelectedForMove(false);
+                    }}
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm font-semibold rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
         </>
       )}
 
@@ -1203,41 +1727,18 @@ const Viewer: React.FC<ViewerProps> = ({
         </>
       )}
 
-      {/* Slice Config Modal */}
-      <SliceConfigModal
-        isOpen={isSliceModalOpen}
-        onClose={() => setIsSliceModalOpen(false)}
-        onGenerate={handleSliceGenerate}
-        floors={placeholderFloors}
-        boundingBox={{ minZ: 0, maxZ: 30 }}
-        pointsInSlice={pointsInSlice}
-        isPreviewEnabled={isSlicePreviewEnabled}
-        onPreviewToggle={setIsSlicePreviewEnabled}
-        sliceHeight={sliceHeight}
-        onSliceHeightChange={setSliceHeight}
-        sliceThickness={sliceThickness}
-        onSliceThicknessChange={setSliceThickness}
-      />
-
       {(!modelLoaded && !isLoading && contentType === 'none') && (
         <div className="absolute inset-0 bg-gray-900 border-2 border-dashed border-gray-700 rounded-lg flex flex-col justify-center items-center pointer-events-none">
           <div className="text-center p-8">
             <CubeIcon />
             <h2 className="mt-4 text-xl font-semibold text-gray-400">3D Viewer</h2>
-            <p className="mt-1 text-sm text-gray-500">Upload a GLB model or LAS point cloud to get started</p>
+            <p className="mt-1 text-sm text-gray-500">Upload a GLB model to get started</p>
             <div className="mt-6 flex gap-3 justify-center">
               <button
                 onClick={handleUploadClick}
                 className="px-4 py-2 bg-cyan-600 text-white font-semibold rounded-md hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto"
               >
                 Upload GLB
-              </button>
-              <button
-                onClick={handleLasUploadClick}
-                className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500 transition-colors pointer-events-auto flex items-center gap-2"
-              >
-                <PointCloudIcon className="h-4 w-4" />
-                Upload LAS
               </button>
             </div>
             {error && <p className="mt-4 text-sm text-red-400">{error}</p>}

@@ -47,6 +47,18 @@ export interface ThreeDAnnotation {
   distanceFeet?: number;        // Calculated distance in feet
 }
 
+// Slice box configuration for floor plan generation
+export interface SliceBoxConfig {
+  // Center position of the slice box in world coordinates
+  center: ThreeDPoint;
+  // Half-extents (width/2, height/2, depth/2) - height is the slice thickness
+  halfExtents: ThreeDPoint;
+  // Rotation in Euler angles (radians)
+  rotation: ThreeDPoint;
+  // Thickness in inches (default 6)
+  thicknessInches: number;
+}
+
 export interface ScanData {
   date: string;
   modelUrl?: string;
