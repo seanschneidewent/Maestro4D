@@ -2,8 +2,12 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CubeIcon, PencilIcon, CloseIcon, TrashIcon } from './Icons';
+import { CubeIcon, PencilIcon, CloseIcon, TrashIcon, PointCloudIcon, SettingsIcon } from './Icons';
 import { ThreeDAnnotation, ThreeDPoint } from '../types';
+import PointCloudSettingsPanel from './PointCloudSettingsPanel';
+import AnalysisToolsPanel from './AnalysisToolsPanel';
+import SliceConfigModal from './SliceConfigModal';
+import FloorPlanResultsPanel from './FloorPlanResultsPanel';
 
 const EMPTY_ARRAY: string[] = [];
 
@@ -38,9 +42,41 @@ const Viewer: React.FC<ViewerProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lasInputRef = useRef<HTMLInputElement>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(!!modelUrl);
   const [error, setError] = useState<string | null>(null);
+  const [contentType, setContentType] = useState<'glb' | 'pointcloud' | 'none'>('none');
+  
+  // Point cloud and analysis panels state
+  const [showPointCloudSettings, setShowPointCloudSettings] = useState(false);
+  const [showAnalysisTools, setShowAnalysisTools] = useState(false);
+  const [showFloorPlanResults, setShowFloorPlanResults] = useState(false);
+  const [isSliceModalOpen, setIsSliceModalOpen] = useState(false);
+  
+  // Point cloud settings state (placeholder values)
+  const [pointSize, setPointSize] = useState(1.0);
+  const [pointBudget, setPointBudget] = useState(2000000);
+  const [colorMode, setColorMode] = useState<'rgb' | 'elevation' | 'intensity' | 'classification'>('rgb');
+  const [visiblePointCount] = useState(1850000);
+  
+  // Slice config state (placeholder values)
+  const [sliceHeight, setSliceHeight] = useState(3.5);
+  const [sliceThickness, setSliceThickness] = useState(6);
+  const [isSlicePreviewEnabled, setIsSlicePreviewEnabled] = useState(true);
+  const [pointsInSlice] = useState(1234567);
+  
+  // Floor plan results state (placeholder values)
+  const [floorPlanLayers, setFloorPlanLayers] = useState({
+    dimensions: true,
+    roomLabels: true,
+    openings: true,
+    wallThickness: false,
+  });
+  
+  // Analysis state
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeFeature, setActiveFeature] = useState<string | null>(null);
   
   // Editing state
   const [isEditing, setIsEditing] = useState(false);
@@ -883,6 +919,7 @@ const Viewer: React.FC<ViewerProps> = ({
     if (file && onModelUpload) {
       const url = URL.createObjectURL(file);
       onModelUpload(url);
+      setContentType('glb');
     }
     // Reset the input value to allow re-uploading the same file
     if (event.target) {
@@ -893,6 +930,85 @@ const Viewer: React.FC<ViewerProps> = ({
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
+
+  const handleLasUploadClick = () => {
+    lasInputRef.current?.click();
+  };
+
+  const handleLasFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      console.log('[Point Cloud] LAS file selected:', file.name);
+      console.log('[Point Cloud] File size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
+      // TODO: Agent 5 will implement actual point cloud loading
+      setContentType('pointcloud');
+    }
+    // Reset the input value to allow re-uploading the same file
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+
+  // Analysis tool handlers
+  const handleGenerateFloorPlan = () => {
+    console.log('[Floor Plan] Opening slice configuration modal');
+    setIsSliceModalOpen(true);
+  };
+
+  const handleDetectStructure = () => {
+    console.log('[Analysis Tools] Detect Structure initiated');
+    setIsProcessing(true);
+    setActiveFeature('structure');
+    // TODO: Agent 5 will implement actual structure detection
+    setTimeout(() => {
+      console.log('[Analysis Tools] Structure detection complete (placeholder)');
+      setIsProcessing(false);
+      setActiveFeature(null);
+    }, 2000);
+  };
+
+  const handleAnalyzeLoadBearing = () => {
+    console.log('[Analysis Tools] Load-Bearing Analysis initiated');
+    setIsProcessing(true);
+    setActiveFeature('load-bearing');
+    // TODO: Agent 5 will implement actual load-bearing analysis
+    setTimeout(() => {
+      console.log('[Analysis Tools] Load-bearing analysis complete (placeholder)');
+      setIsProcessing(false);
+      setActiveFeature(null);
+    }, 2000);
+  };
+
+  const handleSliceGenerate = (config: { floorId: string; sliceHeight: number; sliceThickness: number }) => {
+    console.log('[Floor Plan] Generating with config:', config);
+    setIsSliceModalOpen(false);
+    setIsProcessing(true);
+    setActiveFeature('floor-plan');
+    // TODO: Agent 5 will implement actual floor plan generation
+    setTimeout(() => {
+      console.log('[Floor Plan] Generation complete (placeholder)');
+      setIsProcessing(false);
+      setActiveFeature(null);
+      setShowFloorPlanResults(true);
+    }, 2000);
+  };
+
+  const handleLayerToggle = (layer: string, enabled: boolean) => {
+    console.log(`[Floor Plan] Layer "${layer}" toggled:`, enabled);
+    setFloorPlanLayers(prev => ({ ...prev, [layer]: enabled }));
+  };
+
+  const handleExport = (format: 'svg' | 'dxf' | 'pdf' | 'json') => {
+    console.log(`[Floor Plan] Exporting as ${format.toUpperCase()}`);
+    // TODO: Agent 6 will implement actual export functionality
+  };
+
+  // Placeholder floors for slice config
+  const placeholderFloors = [
+    { id: 'floor-1', label: 'Floor 1 (Ground)', elevation: 0 },
+    { id: 'floor-2', label: 'Floor 2', elevation: 10 },
+    { id: 'floor-3', label: 'Floor 3', elevation: 20 },
+  ];
 
   return (
     <div className="w-full h-full flex flex-col relative">
@@ -907,14 +1023,22 @@ const Viewer: React.FC<ViewerProps> = ({
         onContextMenu={handleContextMenu}
       />
       
-      {/* This input is always in the DOM, so it can be triggered from either button */}
+      {/* Hidden file inputs for upload triggers */}
       <input
         type="file"
-        accept=".glb"
+        accept=".glb,.gltf"
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
         aria-label="Upload GLB model"
+      />
+      <input
+        type="file"
+        accept=".las,.laz,.e57,.ply,.xyz"
+        ref={lasInputRef}
+        onChange={handleLasFileChange}
+        className="hidden"
+        aria-label="Upload point cloud"
       />
 
 
@@ -1009,18 +1133,113 @@ const Viewer: React.FC<ViewerProps> = ({
         </>
       )}
 
-      {(!modelLoaded && !isLoading) && (
+      {/* Point cloud specific toolbar and panels */}
+      {contentType === 'pointcloud' && (
+        <>
+          {/* Point Cloud Toolbar */}
+          <div className="absolute top-4 right-4 flex gap-2">
+            <button
+              onClick={() => {
+                console.log('[Point Cloud] Settings button clicked');
+                setShowPointCloudSettings(!showPointCloudSettings);
+              }}
+              className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md transition-colors pointer-events-auto flex items-center gap-2 ${
+                showPointCloudSettings ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
+              }`}
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Settings
+            </button>
+            <button
+              onClick={() => {
+                console.log('[Analysis Tools] Analysis button clicked');
+                setShowAnalysisTools(!showAnalysisTools);
+              }}
+              className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md transition-colors pointer-events-auto flex items-center gap-2 ${
+                showAnalysisTools ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-gray-800/80 hover:bg-gray-700'
+              }`}
+            >
+              Analysis
+            </button>
+          </div>
+
+          {/* Point Cloud Settings Panel */}
+          {showPointCloudSettings && (
+            <PointCloudSettingsPanel
+              pointSize={pointSize}
+              onPointSizeChange={setPointSize}
+              pointBudget={pointBudget}
+              onPointBudgetChange={setPointBudget}
+              colorMode={colorMode}
+              onColorModeChange={(mode) => setColorMode(mode as typeof colorMode)}
+              visiblePointCount={visiblePointCount}
+              onClose={() => setShowPointCloudSettings(false)}
+            />
+          )}
+
+          {/* Analysis Tools Panel */}
+          {showAnalysisTools && (
+            <AnalysisToolsPanel
+              onGenerateFloorPlan={handleGenerateFloorPlan}
+              onDetectStructure={handleDetectStructure}
+              onAnalyzeLoadBearing={handleAnalyzeLoadBearing}
+              isProcessing={isProcessing}
+              activeFeature={activeFeature}
+            />
+          )}
+
+          {/* Floor Plan Results Panel */}
+          {showFloorPlanResults && (
+            <FloorPlanResultsPanel
+              svgContent=""
+              roomCount={8}
+              totalArea={2450}
+              layers={floorPlanLayers}
+              onLayerToggle={handleLayerToggle}
+              onExport={handleExport}
+              onClose={() => setShowFloorPlanResults(false)}
+            />
+          )}
+        </>
+      )}
+
+      {/* Slice Config Modal */}
+      <SliceConfigModal
+        isOpen={isSliceModalOpen}
+        onClose={() => setIsSliceModalOpen(false)}
+        onGenerate={handleSliceGenerate}
+        floors={placeholderFloors}
+        boundingBox={{ minZ: 0, maxZ: 30 }}
+        pointsInSlice={pointsInSlice}
+        isPreviewEnabled={isSlicePreviewEnabled}
+        onPreviewToggle={setIsSlicePreviewEnabled}
+        sliceHeight={sliceHeight}
+        onSliceHeightChange={setSliceHeight}
+        sliceThickness={sliceThickness}
+        onSliceThicknessChange={setSliceThickness}
+      />
+
+      {(!modelLoaded && !isLoading && contentType === 'none') && (
         <div className="absolute inset-0 bg-gray-900 border-2 border-dashed border-gray-700 rounded-lg flex flex-col justify-center items-center pointer-events-none">
           <div className="text-center p-8">
             <CubeIcon />
-            <h2 className="mt-4 text-xl font-semibold text-gray-400">3D Model Viewer</h2>
-            <p className="mt-1 text-sm text-gray-500">Upload a .glb file or select a date to get started.</p>
-            <button
-              onClick={handleUploadClick}
-              className="mt-6 px-4 py-2 bg-cyan-600 text-white font-semibold rounded-md hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto"
-            >
-              Upload .glb
-            </button>
+            <h2 className="mt-4 text-xl font-semibold text-gray-400">3D Viewer</h2>
+            <p className="mt-1 text-sm text-gray-500">Upload a GLB model or LAS point cloud to get started</p>
+            <div className="mt-6 flex gap-3 justify-center">
+              <button
+                onClick={handleUploadClick}
+                className="px-4 py-2 bg-cyan-600 text-white font-semibold rounded-md hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors pointer-events-auto"
+              >
+                Upload GLB
+              </button>
+              <button
+                onClick={handleLasUploadClick}
+                className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500 transition-colors pointer-events-auto flex items-center gap-2"
+              >
+                <PointCloudIcon className="h-4 w-4" />
+                Upload LAS
+              </button>
+            </div>
             {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
           </div>
         </div>
