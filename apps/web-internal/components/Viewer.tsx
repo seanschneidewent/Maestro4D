@@ -7,6 +7,9 @@ import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig } from '../types';
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
+import { generateFloorPlan, FloorPlanData } from '../lib/floorPlanGenerator';
+import { generateFloorPlanSVG, downloadSvg } from '../lib/floorPlanSvg';
+import { exportToJSON, exportToDXF, exportToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
 
 const EMPTY_ARRAY: string[] = [];
 
@@ -65,6 +68,10 @@ const Viewer: React.FC<ViewerProps> = ({
     openings: true,
     wallThickness: false,
   });
+  
+  // Floor plan generation results
+  const [floorPlanData, setFloorPlanData] = useState<FloorPlanData | null>(null);
+  const [floorPlanSVG, setFloorPlanSVG] = useState<string>('');
   
   // Analysis state
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1402,12 +1409,46 @@ const Viewer: React.FC<ViewerProps> = ({
 
   const handleLayerToggle = (layer: string, enabled: boolean) => {
     console.log(`[Floor Plan] Layer "${layer}" toggled:`, enabled);
-    setFloorPlanLayers(prev => ({ ...prev, [layer]: enabled }));
+    const newLayers = { ...floorPlanLayers, [layer]: enabled };
+    setFloorPlanLayers(newLayers);
+    
+    // Regenerate SVG with updated layers
+    if (floorPlanData) {
+      const svg = generateFloorPlanSVG(floorPlanData, {
+        width: 1000,
+        height: 800,
+        showWalls: true,
+        showDimensions: newLayers.dimensions,
+        showWallThickness: newLayers.wallThickness
+      });
+      setFloorPlanSVG(svg);
+    }
   };
 
   const handleExport = (format: 'svg' | 'dxf' | 'pdf' | 'json') => {
     console.log(`[Floor Plan] Exporting as ${format.toUpperCase()}`);
-    // TODO: Agent 6 will implement actual export functionality
+    
+    if (!floorPlanData || !floorPlanSVG) {
+      console.warn('[Floor Plan] No floor plan data to export');
+      return;
+    }
+    
+    const filename = `floor_plan_${new Date().toISOString().split('T')[0]}`;
+    
+    switch (format) {
+      case 'svg':
+        downloadSvg(floorPlanSVG, `${filename}.svg`);
+        break;
+      case 'dxf':
+        exportToDXF(floorPlanData, originalScaleFactorRef.current, `${filename}.dxf`);
+        break;
+      case 'pdf':
+        exportToPDF(floorPlanSVG, `${filename}.pdf`);
+        break;
+      case 'json':
+        exportToJSON(floorPlanData, `${filename}.json`);
+        break;
+    }
   };
 
   return (
@@ -1574,9 +1615,9 @@ const Viewer: React.FC<ViewerProps> = ({
             {/* Floor Plan Results Panel for GLB Viewer */}
             {showFloorPlanResults && (
               <FloorPlanResultsPanel
-                svgContent=""
-                roomCount={8}
-                totalArea={2450}
+                svgContent={floorPlanSVG}
+                wallCount={floorPlanData?.metadata.wallCount ?? 0}
+                totalArea={floorPlanData ? calculateFloorPlanStats(floorPlanData).boundingAreaSqFt : 0}
                 layers={floorPlanLayers}
                 onLayerToggle={handleLayerToggle}
                 onExport={handleExport}
@@ -1623,16 +1664,41 @@ const Viewer: React.FC<ViewerProps> = ({
                   <button
                     onClick={() => {
                       console.log('[Floor Plan] Generating with slice box config:', sliceBoxConfig);
-                      setIsSliceBoxActive(false);
-                      setIsSliceSelectedForMove(false);
-                      setIsProcessing(true);
-                      setActiveFeature('floor-plan');
-                      // TODO: Implement actual floor plan generation with sliceBoxConfig
-                      setTimeout(() => {
+                      
+                      if (sceneRef.current && sliceBoxConfig) {
+                        setIsProcessing(true);
+                        setActiveFeature('floor-plan');
+                        
+                        // Generate floor plan data from scene
+                        const data = generateFloorPlan(
+                          sceneRef.current,
+                          sliceBoxConfig,
+                          originalScaleFactorRef.current
+                        );
+                        
+                        // Generate SVG with current layer settings
+                        const svg = generateFloorPlanSVG(data, {
+                          width: 1000,
+                          height: 800,
+                          showWalls: true,
+                          showDimensions: floorPlanLayers.dimensions,
+                          showWallThickness: floorPlanLayers.wallThickness
+                        });
+                        
+                        // Update state
+                        setFloorPlanData(data);
+                        setFloorPlanSVG(svg);
+                        setIsSliceBoxActive(false);
+                        setSliceBoxConfig(null);
+                        setIsSliceSelectedForMove(false);
+                        setShowFloorPlanResults(true);
                         setIsProcessing(false);
                         setActiveFeature(null);
-                        setShowFloorPlanResults(true);
-                      }, 2000);
+                        
+                        // Log results
+                        const stats = calculateFloorPlanStats(data);
+                        console.log('[Floor Plan] Generation complete:', stats);
+                      }
                     }}
                     className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
                   >
@@ -1715,9 +1781,9 @@ const Viewer: React.FC<ViewerProps> = ({
           {/* Floor Plan Results Panel */}
           {showFloorPlanResults && (
             <FloorPlanResultsPanel
-              svgContent=""
-              roomCount={8}
-              totalArea={2450}
+              svgContent={floorPlanSVG}
+              wallCount={floorPlanData?.metadata.wallCount ?? 0}
+              totalArea={floorPlanData ? calculateFloorPlanStats(floorPlanData).boundingAreaSqFt : 0}
               layers={floorPlanLayers}
               onLayerToggle={handleLayerToggle}
               onExport={handleExport}
