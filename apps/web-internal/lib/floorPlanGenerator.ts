@@ -56,6 +56,16 @@ export interface WallDetectionConfig {
   minPoints: number;
   /** Whether to use RANSAC (true) or adaptive DBSCAN (false) */
   useRANSAC: boolean;
+  /** DBSCAN epsilon (clustering radius) - only used when useRANSAC is false */
+  dbscanEps?: number;
+  /** DBSCAN minimum points - only used when useRANSAC is false */
+  dbscanMinPoints?: number;
+  /** Corner snap threshold in feet */
+  snapThresholdFeet?: number;
+  /** Wall merge angle tolerance in radians */
+  mergeAngleTolerance?: number;
+  /** Wall merge distance tolerance in feet */
+  mergeDistanceTolerance?: number;
 }
 
 /** Default wall detection configuration */
@@ -66,6 +76,11 @@ export const DEFAULT_WALL_DETECTION_CONFIG: WallDetectionConfig = {
   ransacIterations: 200,
   minPoints: 30,
   useRANSAC: true,
+  dbscanEps: 0.008,
+  dbscanMinPoints: 20,
+  snapThresholdFeet: 1.0,
+  mergeAngleTolerance: 0.1,
+  mergeDistanceTolerance: 0.5,
 };
 
 // ============================================================================
@@ -1390,9 +1405,11 @@ export function generateFloorPlan(
       }
     }
   } else {
-    // Use adaptive DBSCAN directly
-    console.log('[Floor Plan] Using adaptive DBSCAN wall detection...');
-    const { eps, minPoints } = calculateAdaptiveDBSCANParams(points2D);
+    // Use DBSCAN with config or adaptive parameters
+    console.log('[Floor Plan] Using DBSCAN wall detection...');
+    const eps = config.dbscanEps ?? calculateAdaptiveDBSCANParams(points2D).eps;
+    const minPoints = config.dbscanMinPoints ?? calculateAdaptiveDBSCANParams(points2D).minPoints;
+    console.log(`[Floor Plan] DBSCAN params: eps=${eps.toFixed(4)}, minPoints=${minPoints}`);
     const clusters = dbscanCluster(points2D, eps, minPoints);
     
     // Split clusters at corners
@@ -1410,10 +1427,14 @@ export function generateFloorPlan(
   }
   
   // Step 4: Merge collinear walls
-  walls = mergeCollinearWalls(walls);
+  walls = mergeCollinearWalls(
+    walls, 
+    config.mergeAngleTolerance ?? 0.1, 
+    config.mergeDistanceTolerance ?? 0.5
+  );
   
   // Step 5: Snap walls to corners
-  walls = snapWallsToCorners(walls, scaleFactor);
+  walls = snapWallsToCorners(walls, scaleFactor, config.snapThresholdFeet ?? 1.0);
   
   // Recalculate bounds from walls (more accurate)
   if (walls.length > 0) {

@@ -7,7 +7,7 @@ import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig } from '../types';
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
-import { generateFloorPlan, FloorPlanData } from '../lib/floorPlanGenerator';
+import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D, WallDetectionConfig, DEFAULT_WALL_DETECTION_CONFIG, dbscanCluster, fitLineToCluster, mergeCollinearWalls, snapWallsToCorners, WallSegment, splitClustersAtCorners, detectWallsRANSAC, calculateAdaptiveDBSCANParams } from '../lib/floorPlanGenerator';
 import { generateFloorPlanSVG, downloadSvg } from '../lib/floorPlanSvg';
 import { exportToJSON, exportToDXF, exportToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
 
@@ -118,6 +118,23 @@ const Viewer: React.FC<ViewerProps> = ({
   const [isDraggingPoint, setIsDraggingPoint] = useState(false);
   const isDraggingRef = useRef(false); // Ref mirror for use in animation loop
   const dragStartRef = useRef<{ mousePos: THREE.Vector2; pointPos: THREE.Vector3 } | null>(null);
+
+  // Slice preview state
+  const [previewPoints, setPreviewPoints] = useState<Point2D[]>([]);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Algorithm parameters state
+  const [wallDetectionConfig, setWallDetectionConfig] = useState<WallDetectionConfig>({
+    ...DEFAULT_WALL_DETECTION_CONFIG,
+  });
+  const [dbscanEps, setDbscanEps] = useState(0.008);
+  const [dbscanMinPoints, setDbscanMinPoints] = useState(20);
+  const [snapThreshold, setSnapThreshold] = useState(1.0);
+  const [mergeTolerance, setMergeTolerance] = useState({ angle: 0.1, distance: 0.5 });
+  const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
+  
+  // Preview walls state (for real-time preview)
+  const [previewWalls, setPreviewWalls] = useState<WallSegment[]>([]);
 
   // Helper to calculate distance between two 3D points
   const calculateDistance = (start: ThreeDPoint, end: ThreeDPoint): number => {
@@ -405,6 +422,147 @@ const Viewer: React.FC<ViewerProps> = ({
       sliceBoxGroupRef.current = sliceBoxGroup;
     }
   }, [isSliceBoxActive, sliceBoxConfig, createSliceBox, isSliceSelectedForMove]);
+
+  // Update slice preview when slice config changes
+  useEffect(() => {
+    if (!isSliceBoxActive || !sliceBoxConfig || !sceneRef.current) {
+      setPreviewPoints([]);
+      setPreviewWalls([]);
+      return;
+    }
+    
+    // Debounce for performance
+    const timeoutId = setTimeout(() => {
+      if (!sceneRef.current) return;
+      
+      const points3D = extractPointsFromGLB(sceneRef.current);
+      const points2D = sliceAndProject(points3D, sliceBoxConfig, originalScaleFactorRef.current);
+      
+      // Sample if too many points (for performance)
+      const maxPoints = 10000;
+      if (points2D.length > maxPoints) {
+        const step = Math.ceil(points2D.length / maxPoints);
+        setPreviewPoints(points2D.filter((_, i) => i % step === 0));
+      } else {
+        setPreviewPoints(points2D);
+      }
+    }, 50); // 50ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [isSliceBoxActive, sliceBoxConfig]);
+
+  // Run wall detection when algorithm parameters or preview points change
+  useEffect(() => {
+    if (previewPoints.length === 0) {
+      setPreviewWalls([]);
+      return;
+    }
+    
+    // Debounce for performance
+    const timeoutId = setTimeout(() => {
+      const scaleFactor = originalScaleFactorRef.current;
+      let walls: WallSegment[] = [];
+      
+      if (wallDetectionConfig.useRANSAC) {
+        // Use RANSAC wall detection
+        walls = detectWallsRANSAC(previewPoints, scaleFactor, wallDetectionConfig);
+      } else {
+        // Use DBSCAN clustering
+        const clusters = dbscanCluster(previewPoints, dbscanEps, dbscanMinPoints);
+        const splitClusters = splitClustersAtCorners(clusters);
+        
+        for (const cluster of splitClusters) {
+          const wall = fitLineToCluster(cluster, scaleFactor);
+          if (wall && wall.lengthFeet >= wallDetectionConfig.minWallLengthFeet) {
+            walls.push(wall);
+          }
+        }
+      }
+      
+      // Apply post-processing
+      walls = mergeCollinearWalls(walls, mergeTolerance.angle, mergeTolerance.distance);
+      walls = snapWallsToCorners(walls, scaleFactor, snapThreshold);
+      
+      setPreviewWalls(walls);
+    }, 100); // 100ms debounce for wall detection
+    
+    return () => clearTimeout(timeoutId);
+  }, [previewPoints, wallDetectionConfig, dbscanEps, dbscanMinPoints, snapThreshold, mergeTolerance]);
+
+  // Render slice preview canvas with points and walls
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Clear canvas
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    if (previewPoints.length === 0) return;
+    
+    // Calculate bounds from points
+    const bounds = previewPoints.reduce((acc, p) => ({
+      minX: Math.min(acc.minX, p.x),
+      maxX: Math.max(acc.maxX, p.x),
+      minY: Math.min(acc.minY, p.y),
+      maxY: Math.max(acc.maxY, p.y),
+    }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+    
+    const padding = 20;
+    const scaleX = (canvas.width - padding * 2) / (bounds.maxX - bounds.minX || 1);
+    const scaleY = (canvas.height - padding * 2) / (bounds.maxY - bounds.minY || 1);
+    const scale = Math.min(scaleX, scaleY);
+    
+    // Center the drawing
+    const contentWidth = (bounds.maxX - bounds.minX) * scale;
+    const contentHeight = (bounds.maxY - bounds.minY) * scale;
+    const offsetX = (canvas.width - contentWidth) / 2;
+    const offsetY = (canvas.height - contentHeight) / 2;
+    
+    // Transform function for coordinates
+    const transform = (p: Point2D) => ({
+      x: offsetX + (p.x - bounds.minX) * scale,
+      y: offsetY + (p.y - bounds.minY) * scale,
+    });
+    
+    // Draw points (dimmer when walls are present)
+    ctx.fillStyle = previewWalls.length > 0 ? '#374151' : '#00bcd4';
+    for (const p of previewPoints) {
+      const { x, y } = transform(p);
+      ctx.beginPath();
+      ctx.arc(x, y, previewWalls.length > 0 ? 1 : 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    // Draw detected walls
+    if (previewWalls.length > 0) {
+      ctx.strokeStyle = '#00bcd4';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      
+      for (const wall of previewWalls) {
+        const start = transform(wall.start);
+        const end = transform(wall.end);
+        
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        
+        // Draw endpoints
+        ctx.fillStyle = '#22d3ee';
+        ctx.beginPath();
+        ctx.arc(start.x, start.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(end.x, end.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }, [previewPoints, previewWalls]);
 
   // Helper to create/update temporary start marker for measurements
   const updateTempMarker = (point: ThreeDPoint | null) => {
@@ -1625,6 +1783,295 @@ const Viewer: React.FC<ViewerProps> = ({
               />
             )}
 
+            {/* Slice Preview Panel - Expandable */}
+            {isSliceBoxActive && sliceBoxConfig && (
+              <div 
+                className={`absolute bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-lg overflow-hidden pointer-events-auto shadow-xl transition-all duration-300 ease-in-out ${
+                  isPreviewExpanded 
+                    ? 'bottom-24 right-4 w-[520px] h-[480px]' 
+                    : 'bottom-24 right-4 w-48 h-48'
+                }`}
+              >
+                {/* Header */}
+                <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gray-800/80 border-b border-gray-700/50 z-20">
+                  <span className="text-xs text-gray-400 font-medium">
+                    Top-Down Preview
+                  </span>
+                  <button
+                    onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
+                    className="p-1 hover:bg-gray-700 rounded transition-colors"
+                    title={isPreviewExpanded ? 'Collapse' : 'Expand'}
+                  >
+                    <svg 
+                      className={`h-4 w-4 text-gray-400 transition-transform duration-300 ${isPreviewExpanded ? 'rotate-180' : ''}`} 
+                      viewBox="0 0 24 24" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      strokeWidth="2"
+                    >
+                      {isPreviewExpanded ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 9L4 4m0 0v5m0-5h5m6 11l5 5m0 0v-5m0 5h-5" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                      )}
+                    </svg>
+                  </button>
+                </div>
+                
+                {/* Canvas Container */}
+                <div className={`${isPreviewExpanded ? 'pt-9' : 'pt-8'} h-full flex`}>
+                  {/* Preview Canvas */}
+                  <div className={`${isPreviewExpanded ? 'w-[280px]' : 'w-full'} h-full relative`}>
+                    <canvas 
+                      ref={previewCanvasRef} 
+                      width={isPreviewExpanded ? 280 : 192} 
+                      height={isPreviewExpanded ? 440 : 160} 
+                      className="w-full h-full"
+                    />
+                    {/* Point/Wall count overlay */}
+                    <div className="absolute bottom-2 left-2 text-xs text-gray-500 font-mono">
+                      {previewPoints.length.toLocaleString()} pts | {previewWalls.length} walls
+                    </div>
+                  </div>
+                  
+                  {/* Algorithm Controls - Only visible when expanded */}
+                  {isPreviewExpanded && (
+                    <div className="flex-1 border-l border-gray-700/50 overflow-y-auto p-3 space-y-4">
+                      {/* Detection Method Toggle */}
+                      <div>
+                        <label className="text-xs text-gray-400 font-medium block mb-2">Detection Method</label>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setWallDetectionConfig(prev => ({ ...prev, useRANSAC: true }))}
+                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-l transition-colors ${
+                              wallDetectionConfig.useRANSAC 
+                                ? 'bg-cyan-600 text-white' 
+                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                            }`}
+                          >
+                            RANSAC
+                          </button>
+                          <button
+                            onClick={() => setWallDetectionConfig(prev => ({ ...prev, useRANSAC: false }))}
+                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-r transition-colors ${
+                              !wallDetectionConfig.useRANSAC 
+                                ? 'bg-cyan-600 text-white' 
+                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                            }`}
+                          >
+                            DBSCAN
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* RANSAC Parameters */}
+                      {wallDetectionConfig.useRANSAC && (
+                        <div className="space-y-3">
+                          <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">RANSAC</div>
+                          
+                          {/* Distance Threshold */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Distance Threshold</span>
+                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.distanceThreshold.toFixed(3)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.001"
+                              max="0.05"
+                              step="0.001"
+                              value={wallDetectionConfig.distanceThreshold}
+                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, distanceThreshold: parseFloat(e.target.value) }))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+
+                          {/* Min Wall Length */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Min Wall Length</span>
+                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.minWallLengthFeet.toFixed(1)} ft</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="10"
+                              step="0.5"
+                              value={wallDetectionConfig.minWallLengthFeet}
+                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, minWallLengthFeet: parseFloat(e.target.value) }))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+
+                          {/* Max Walls */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Max Walls</span>
+                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.maxWalls}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="100"
+                              step="5"
+                              value={wallDetectionConfig.maxWalls}
+                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, maxWalls: parseInt(e.target.value) }))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+
+                          {/* Iterations */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Iterations</span>
+                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.ransacIterations}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="50"
+                              max="500"
+                              step="25"
+                              value={wallDetectionConfig.ransacIterations}
+                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, ransacIterations: parseInt(e.target.value) }))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+
+                          {/* Min Points */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Min Points</span>
+                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.minPoints}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="100"
+                              step="5"
+                              value={wallDetectionConfig.minPoints}
+                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, minPoints: parseInt(e.target.value) }))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* DBSCAN Parameters */}
+                      {!wallDetectionConfig.useRANSAC && (
+                        <div className="space-y-3">
+                          <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">DBSCAN</div>
+                          
+                          {/* Epsilon */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Epsilon (eps)</span>
+                              <span className="text-cyan-400 font-mono">{dbscanEps.toFixed(3)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.002"
+                              max="0.05"
+                              step="0.001"
+                              value={dbscanEps}
+                              onChange={(e) => setDbscanEps(parseFloat(e.target.value))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+
+                          {/* Min Points */}
+                          <div>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Min Points</span>
+                              <span className="text-cyan-400 font-mono">{dbscanMinPoints}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="50"
+                              step="1"
+                              value={dbscanMinPoints}
+                              onChange={(e) => setDbscanMinPoints(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Post-Processing */}
+                      <div className="space-y-3 pt-2 border-t border-gray-700/50">
+                        <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">Post-Processing</div>
+                        
+                        {/* Snap Threshold */}
+                        <div>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-gray-400">Snap Threshold</span>
+                            <span className="text-cyan-400 font-mono">{snapThreshold.toFixed(2)} ft</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.25"
+                            max="3"
+                            step="0.25"
+                            value={snapThreshold}
+                            onChange={(e) => setSnapThreshold(parseFloat(e.target.value))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          />
+                        </div>
+
+                        {/* Merge Angle Tolerance */}
+                        <div>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-gray-400">Merge Angle</span>
+                            <span className="text-cyan-400 font-mono">{(mergeTolerance.angle * 180 / Math.PI).toFixed(1)}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="0.52"
+                            step="0.017"
+                            value={mergeTolerance.angle}
+                            onChange={(e) => setMergeTolerance(prev => ({ ...prev, angle: parseFloat(e.target.value) }))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          />
+                        </div>
+
+                        {/* Merge Distance */}
+                        <div>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-gray-400">Merge Distance</span>
+                            <span className="text-cyan-400 font-mono">{mergeTolerance.distance.toFixed(2)} ft</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="2"
+                            step="0.1"
+                            value={mergeTolerance.distance}
+                            onChange={(e) => setMergeTolerance(prev => ({ ...prev, distance: parseFloat(e.target.value) }))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Reset Button */}
+                      <button
+                        onClick={() => {
+                          setWallDetectionConfig({ ...DEFAULT_WALL_DETECTION_CONFIG });
+                          setDbscanEps(0.008);
+                          setDbscanMinPoints(20);
+                          setSnapThreshold(1.0);
+                          setMergeTolerance({ angle: 0.1, distance: 0.5 });
+                        }}
+                        className="w-full py-1.5 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+                      >
+                        Reset to Defaults
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Slice Box Controls */}
             {isSliceBoxActive && sliceBoxConfig && (
               <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700/50 rounded-xl px-6 py-4 pointer-events-auto">
@@ -1664,16 +2111,28 @@ const Viewer: React.FC<ViewerProps> = ({
                   <button
                     onClick={() => {
                       console.log('[Floor Plan] Generating with slice box config:', sliceBoxConfig);
+                      console.log('[Floor Plan] Wall detection config:', wallDetectionConfig);
                       
                       if (sceneRef.current && sliceBoxConfig) {
                         setIsProcessing(true);
                         setActiveFeature('floor-plan');
                         
-                        // Generate floor plan data from scene
+                        // Build full config with all parameters
+                        const fullConfig: WallDetectionConfig = {
+                          ...wallDetectionConfig,
+                          dbscanEps: dbscanEps,
+                          dbscanMinPoints: dbscanMinPoints,
+                          snapThresholdFeet: snapThreshold,
+                          mergeAngleTolerance: mergeTolerance.angle,
+                          mergeDistanceTolerance: mergeTolerance.distance,
+                        };
+                        
+                        // Generate floor plan data from scene with full config
                         const data = generateFloorPlan(
                           sceneRef.current,
                           sliceBoxConfig,
-                          originalScaleFactorRef.current
+                          originalScaleFactorRef.current,
+                          fullConfig
                         );
                         
                         // Generate SVG with current layer settings
