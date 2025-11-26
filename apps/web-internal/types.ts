@@ -43,6 +43,8 @@ export interface ThreeDAnnotation {
   end: ThreeDPoint;
   color: string;
   linkedInsightId?: string;
+  isMeasurement?: boolean;      // Distinguish from point annotations
+  distanceFeet?: number;        // Calculated distance in feet
 }
 
 export interface ScanData {

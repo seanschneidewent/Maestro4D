@@ -5,15 +5,24 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeIcon, PencilIcon, CloseIcon, TrashIcon } from './Icons';
 import { ThreeDAnnotation, ThreeDPoint } from '../types';
 
+const EMPTY_ARRAY: string[] = [];
+
 interface ViewerProps {
   modelUrl?: string;
   onModelUpload?: (url: string) => void;
   annotations?: ThreeDAnnotation[];
   onAnnotationAdd?: (annotation: ThreeDAnnotation) => void;
+  onAnnotationUpdate?: (annotation: ThreeDAnnotation) => void;
   onPointCreated?: (pointId: string) => void;
   highlightedPointIds?: string[];
   onAnnotationSelect?: (annotationId: string | null) => void;
   onAnnotationDelete?: (annotationId: string) => void;
+}
+
+// Type for tracking which measurement point is being edited
+interface EditingPointState {
+  annotationId: string;
+  isStart: boolean; // true = start point, false = end point
 }
 
 const Viewer: React.FC<ViewerProps> = ({ 
@@ -21,8 +30,9 @@ const Viewer: React.FC<ViewerProps> = ({
     onModelUpload, 
     annotations = [], 
     onAnnotationAdd, 
+    onAnnotationUpdate,
     onPointCreated,
-    highlightedPointIds = [],
+    highlightedPointIds = EMPTY_ARRAY,
     onAnnotationSelect,
     onAnnotationDelete
 }) => {
@@ -50,6 +60,39 @@ const Viewer: React.FC<ViewerProps> = ({
   const annotationsGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
+  
+  // Measurement refs and state
+  const originalScaleFactorRef = useRef<number>(1);
+  const tempMarkerRef = useRef<THREE.Mesh | null>(null);
+  const [isMeasuring, setIsMeasuring] = useState(false);
+  const [measureStartPoint, setMeasureStartPoint] = useState<ThreeDPoint | null>(null);
+
+  // Measurement point editing state
+  const [editingPoint, setEditingPoint] = useState<EditingPointState | null>(null);
+  const [isDraggingPoint, setIsDraggingPoint] = useState(false);
+  const isDraggingRef = useRef(false); // Ref mirror for use in animation loop
+  const dragStartRef = useRef<{ mousePos: THREE.Vector2; pointPos: THREE.Vector3 } | null>(null);
+
+  // Helper to calculate distance between two 3D points
+  const calculateDistance = (start: ThreeDPoint, end: ThreeDPoint): number => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const dz = end.z - start.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  };
+
+  // Helper to format distance as feet and inches (e.g., "10' 6\"")
+  const formatFeetInches = (feet: number): string => {
+    const isNegative = feet < 0;
+    const absFeet = Math.abs(feet);
+    const wholeFeet = Math.floor(absFeet);
+    const inches = Math.round((absFeet - wholeFeet) * 12);
+    // Handle edge case where rounding gives 12 inches
+    if (inches === 12) {
+      return `${isNegative ? '-' : ''}${wholeFeet + 1}' 0"`;
+    }
+    return `${isNegative ? '-' : ''}${wholeFeet}' ${inches}"`;
+  };
 
   // Helper to create line geometry
   const createLine = (start: ThreeDPoint, end: ThreeDPoint, color: string) => {
@@ -67,33 +110,39 @@ const Viewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     if (!annotationsGroupRef.current || !sceneRef.current) return;
     
-    // Clear existing annotations
-    while(annotationsGroupRef.current.children.length > 0){ 
-        const child = annotationsGroupRef.current.children[0];
-        annotationsGroupRef.current.remove(child);
+    // Clear existing annotations (except temp marker)
+    const childrenToRemove = annotationsGroupRef.current.children.filter(
+        child => child.userData?.type !== 'temp-marker'
+    );
+    childrenToRemove.forEach(child => {
+        annotationsGroupRef.current?.remove(child);
         if (child instanceof THREE.Line) {
             child.geometry.dispose();
             (child.material as THREE.Material).dispose();
         } else if (child instanceof THREE.Mesh) {
             child.geometry.dispose();
             (child.material as THREE.Material).dispose();
+        } else if (child instanceof THREE.Sprite) {
+            (child.material as THREE.SpriteMaterial).map?.dispose();
+            (child.material as THREE.Material).dispose();
         }
-    }
+    });
 
     // Add annotations
     annotations.forEach(ann => {
         const isSelected = ann.id === selectedAnnotationId;
         const isHighlighted = highlightedPointIds.includes(ann.id);
         const isMarkedForDeletion = annotationsToDelete.includes(ann.id);
-        const color = isMarkedForDeletion ? '#ef4444' : ((isSelected || isHighlighted) ? '#ffff00' : ann.color); // Red if deleting, Yellow if selected/highlighted
+        const baseColor = ann.isMeasurement ? '#00ff00' : ann.color; // Green for measurements
+        const color = isMarkedForDeletion ? '#ef4444' : ((isSelected || isHighlighted) ? '#ffff00' : baseColor);
 
         // Check if it's a point annotation (start === end)
         const isPointAnnotation = ann.start.x === ann.end.x && ann.start.y === ann.end.y && ann.start.z === ann.end.z;
 
-        if (isPointAnnotation) {
+        if (isPointAnnotation && !ann.isMeasurement) {
             // Render single larger marker for point annotation
-            const markerGeo = new THREE.SphereGeometry(0.05, 32, 32); // Larger, smoother sphere
-            const markerMat = new THREE.MeshBasicMaterial({ color: color });
+            const markerGeo = new THREE.SphereGeometry(0.0033, 32, 32);
+            const markerMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.6 });
             
             const marker = new THREE.Mesh(markerGeo, markerMat);
             marker.position.set(ann.start.x, ann.start.y, ann.start.z);
@@ -101,32 +150,123 @@ const Viewer: React.FC<ViewerProps> = ({
             
             annotationsGroupRef.current?.add(marker);
         } else {
-            // Render line annotation with line and two markers (legacy support)
+            // Render line annotation with line and two markers
             const line = createLine(ann.start, ann.end, color);
             line.userData = { id: ann.id, type: 'annotation' };
             annotationsGroupRef.current?.add(line);
             
-            // Add markers at ends
-            const markerGeo = new THREE.SphereGeometry(0.025, 16, 16);
-            const markerMat = new THREE.MeshBasicMaterial({ color: color });
+            // Check if this annotation has an editing point
+            const isEditingStart = editingPoint?.annotationId === ann.id && editingPoint.isStart;
+            const isEditingEnd = editingPoint?.annotationId === ann.id && !editingPoint.isStart;
             
-            const startMarker = new THREE.Mesh(markerGeo, markerMat);
+            // Add markers at ends - larger and orange for editing point
+            const normalMarkerGeo = new THREE.SphereGeometry(0.0003, 16, 16);
+            const editingMarkerGeo = new THREE.SphereGeometry(0.0005, 16, 16); // 1.5x larger
+            
+            const startMarkerGeo = isEditingStart ? editingMarkerGeo : normalMarkerGeo;
+            const startMarkerColor = isEditingStart ? '#ff9800' : color; // Orange for editing
+            const startMarkerMat = new THREE.MeshBasicMaterial({ 
+                color: startMarkerColor, 
+                transparent: isEditingStart, 
+                opacity: isEditingStart ? 0.9 : 1.0 
+            });
+            
+            const startMarker = new THREE.Mesh(startMarkerGeo, startMarkerMat);
             startMarker.position.set(ann.start.x, ann.start.y, ann.start.z);
-            startMarker.userData = { id: ann.id, type: 'annotation' };
+            startMarker.userData = { id: ann.id, type: 'annotation', isStartMarker: true, isMeasurement: ann.isMeasurement };
             
-            const endMarker = new THREE.Mesh(markerGeo, markerMat);
+            const endMarkerGeo = isEditingEnd ? editingMarkerGeo : normalMarkerGeo;
+            const endMarkerColor = isEditingEnd ? '#ff9800' : color; // Orange for editing
+            const endMarkerMat = new THREE.MeshBasicMaterial({ 
+                color: endMarkerColor, 
+                transparent: isEditingEnd, 
+                opacity: isEditingEnd ? 0.9 : 1.0 
+            });
+            
+            const endMarker = new THREE.Mesh(endMarkerGeo, endMarkerMat);
             endMarker.position.set(ann.end.x, ann.end.y, ann.end.z);
-            endMarker.userData = { id: ann.id, type: 'annotation' };
+            endMarker.userData = { id: ann.id, type: 'annotation', isStartMarker: false, isMeasurement: ann.isMeasurement };
 
             annotationsGroupRef.current?.add(startMarker);
             annotationsGroupRef.current?.add(endMarker);
+            
+            // Add distance label for measurements
+            if (ann.isMeasurement && ann.distanceFeet !== undefined) {
+                const midpoint = new THREE.Vector3(
+                    (ann.start.x + ann.end.x) / 2,
+                    (ann.start.y + ann.end.y) / 2,
+                    (ann.start.z + ann.end.z) / 2
+                );
+                
+                // Create text sprite for the distance label
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                if (context) {
+                    canvas.width = 256;
+                    canvas.height = 64;
+                    
+                    // Background
+                    context.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                    context.roundRect(0, 0, canvas.width, canvas.height, 8);
+                    context.fill();
+                    
+                    // Border
+                    context.strokeStyle = color;
+                    context.lineWidth = 3;
+                    context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, 6);
+                    context.stroke();
+                    
+                    // Text
+                    context.font = 'bold 28px Arial';
+                    context.fillStyle = color;
+                    context.textAlign = 'center';
+                    context.textBaseline = 'middle';
+                    context.fillText(formatFeetInches(ann.distanceFeet), canvas.width / 2, canvas.height / 2);
+                    
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const spriteMat = new THREE.SpriteMaterial({ 
+                        map: texture, 
+                        transparent: true,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    const sprite = new THREE.Sprite(spriteMat);
+                    sprite.position.copy(midpoint);
+                    sprite.scale.set(0.0375, 0.009375, 1); // Adjust size as needed
+                    sprite.userData = { id: ann.id, type: 'annotation' };
+                    
+                    annotationsGroupRef.current?.add(sprite);
+                }
+            }
         }
     });
-  }, [annotations, modelLoaded, selectedAnnotationId, highlightedPointIds, annotationsToDelete]);
+  }, [annotations, modelLoaded, selectedAnnotationId, highlightedPointIds, annotationsToDelete, editingPoint]);
 
   // Preview line logic removed - no longer needed for single-point annotations
 
-  // Handle click on canvas
+  // Helper to create/update temporary start marker for measurements
+  const updateTempMarker = (point: ThreeDPoint | null) => {
+    // Remove existing temp marker
+    if (tempMarkerRef.current && annotationsGroupRef.current) {
+      annotationsGroupRef.current.remove(tempMarkerRef.current);
+      tempMarkerRef.current.geometry.dispose();
+      (tempMarkerRef.current.material as THREE.Material).dispose();
+      tempMarkerRef.current = null;
+    }
+    
+    // Create new temp marker if point provided
+    if (point && annotationsGroupRef.current) {
+      const markerGeo = new THREE.SphereGeometry(0.0015, 16, 16);
+      const markerMat = new THREE.MeshBasicMaterial({ color: '#00ff00', transparent: true, opacity: 0.8 });
+      const marker = new THREE.Mesh(markerGeo, markerMat);
+      marker.position.set(point.x, point.y, point.z);
+      marker.userData = { type: 'temp-marker' };
+      annotationsGroupRef.current.add(marker);
+      tempMarkerRef.current = marker;
+    }
+  };
+
+  // Handle left-click on canvas (selection, delete mode, measurement, and Ctrl+Click annotation placement)
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!modelRef.current || !cameraRef.current || !sceneRef.current || !annotationsGroupRef.current) return;
     
@@ -140,10 +280,67 @@ const Viewer: React.FC<ViewerProps> = ({
     mouseRef.current.set(x, y);
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
     
-    // 1. Check for annotation clicks first
+    // Measurement mode - two-click workflow (Ctrl+Click to preserve navigation)
+    if (isMeasuring && event.ctrlKey && !isDeleteMode) {
+        const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
+        if (intersects.length > 0) {
+            const point = intersects[0].point;
+            const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
+            
+            if (!measureStartPoint) {
+                // First click - set start point and show temp marker
+                setMeasureStartPoint(clickedPoint);
+                updateTempMarker(clickedPoint);
+            } else {
+                // Second click - complete measurement
+                const distanceInViewUnits = calculateDistance(measureStartPoint, clickedPoint);
+                // Convert back to original model units (feet) by dividing by scale factor
+                const distanceFeet = distanceInViewUnits / originalScaleFactorRef.current;
+                
+                const newMeasurement: ThreeDAnnotation = {
+                    id: Math.random().toString(36).substring(2, 10),
+                    start: measureStartPoint,
+                    end: clickedPoint,
+                    color: '#00ff00',  // Green for measurements
+                    isMeasurement: true,
+                    distanceFeet,
+                };
+                
+                onAnnotationAdd?.(newMeasurement);
+                
+                // Reset for next measurement
+                setMeasureStartPoint(null);
+                updateTempMarker(null);
+            }
+        }
+        return;
+    }
+    
+    // Ctrl+Click in edit mode = place annotation
+    if (isEditing && event.ctrlKey && !isDeleteMode) {
+        const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
+        if (intersects.length > 0) {
+            const point = intersects[0].point;
+            const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
+            
+            const newAnnotation: ThreeDAnnotation = {
+                id: Math.random().toString(36).substring(2, 10),
+                start: clickedPoint,
+                end: clickedPoint,
+                color: '#00bcd4'
+            };
+            
+            onAnnotationAdd?.(newAnnotation);
+            onPointCreated?.(newAnnotation.id);
+            setSelectedAnnotationId(null);
+            onAnnotationSelect?.(null);
+        }
+        return;
+    }
+    
+    // Check for annotation clicks (selection or delete mode toggle)
     const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
     if (annotationIntersects.length > 0) {
-        // Find the first object with userData.type === 'annotation'
         const hit = annotationIntersects.find(i => i.object.userData?.type === 'annotation');
         if (hit) {
             const annId = hit.object.userData.id;
@@ -161,47 +358,228 @@ const Viewer: React.FC<ViewerProps> = ({
 
             setSelectedAnnotationId(annId);
             onAnnotationSelect?.(annId);
-            return; // Stop processing to avoid creating new points under existing ones
+            return;
         }
     }
 
-    // If we didn't hit an annotation, and we are NOT editing, deselect
-    if (!isEditing && !isDeleteMode) {
-        if (selectedAnnotationId) {
-            setSelectedAnnotationId(null);
-            onAnnotationSelect?.(null);
-        }
-        return;
-    }
-
-    // 2. If editing, check for model clicks
-    const intersects = raycasterRef.current.intersectObject(modelRef.current, true);
-
-    if (intersects.length > 0 && !isDeleteMode && isEditing) {
-        const point = intersects[0].point;
-        const clickedPoint: ThreeDPoint = { x: point.x, y: point.y, z: point.z };
-
-        // Create point annotation immediately (start === end)
-        const newAnnotation: ThreeDAnnotation = {
-            id: Math.random().toString(36).substring(2, 10),
-            start: clickedPoint,
-            end: clickedPoint, // Same point for point annotation
-            color: '#00bcd4' // Cyan color to match the UI theme
-        };
-        
-        // Add the annotation to the scene
-        onAnnotationAdd?.(newAnnotation);
-        
-        // Notify parent that a point was created (for linking with AnnotationsPanel)
-        onPointCreated?.(newAnnotation.id);
-        
-        // Deselect any annotation when creating new one
+    // Deselect if clicking empty space (not in delete mode)
+    if (!isDeleteMode && selectedAnnotationId) {
         setSelectedAnnotationId(null);
         onAnnotationSelect?.(null);
     }
+    
+    // Exit edit mode if clicking elsewhere (not on the editing marker)
+    if (editingPoint) {
+        // Check if we clicked on the editing marker - if so, don't exit
+        const editMarkerHit = annotationIntersects.find(i => 
+            i.object.userData?.id === editingPoint.annotationId &&
+            i.object.userData?.isStartMarker === editingPoint.isStart
+        );
+        
+        if (!editMarkerHit) {
+            setEditingPoint(null);
+        }
+    }
   };
 
-  // Mouse move handler removed - no longer needed for single-point annotations
+  // Prevent default context menu when in edit or measure mode
+  const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isEditing || isMeasuring) {
+        event.preventDefault();
+    }
+  };
+
+  // Handle double-click to enter/exit measurement point edit mode
+  const handleCanvasDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!cameraRef.current || !annotationsGroupRef.current) return;
+    
+    // Don't handle double-click in delete mode or while creating measurements
+    if (isDeleteMode || isMeasuring || isEditing) return;
+    
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    mouseRef.current.set(x, y);
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // Check for measurement marker hits
+    const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
+    if (annotationIntersects.length > 0) {
+        // Find a measurement marker hit
+        const hit = annotationIntersects.find(i => 
+            i.object.userData?.type === 'annotation' && 
+            i.object.userData?.isMeasurement === true
+        );
+        
+        if (hit) {
+            const annId = hit.object.userData.id;
+            const isStartMarker = hit.object.userData.isStartMarker;
+            
+            // Toggle edit mode: if already editing this point, exit; otherwise enter edit mode
+            if (editingPoint?.annotationId === annId && editingPoint.isStart === isStartMarker) {
+                // Double-clicking the same marker - exit edit mode
+                setEditingPoint(null);
+            } else {
+                // Enter edit mode for this marker
+                // Keep orbit controls enabled - only disable during actual drag on marker
+                setEditingPoint({ annotationId: annId, isStart: isStartMarker });
+            }
+            return;
+        }
+    }
+    
+    // Double-clicked elsewhere - exit edit mode if active
+    if (editingPoint) {
+        setEditingPoint(null);
+    }
+  };
+
+  // Handle mouse down for starting drag on editing point
+  const handleCanvasMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!editingPoint || !cameraRef.current || !annotationsGroupRef.current) return;
+    
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    mouseRef.current.set(x, y);
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    
+    // Check if clicking on the editing marker
+    const annotationIntersects = raycasterRef.current.intersectObject(annotationsGroupRef.current, true);
+    const hit = annotationIntersects.find(i => 
+        i.object.userData?.id === editingPoint.annotationId &&
+        i.object.userData?.isStartMarker === editingPoint.isStart
+    );
+    
+    if (hit) {
+        setIsDraggingPoint(true);
+        isDraggingRef.current = true;
+        dragStartRef.current = {
+            mousePos: new THREE.Vector2(event.clientX, event.clientY),
+            pointPos: hit.object.position.clone()
+        };
+        // Disable orbit controls during drag
+        if (controlsRef.current) {
+            controlsRef.current.enabled = false;
+        }
+        event.preventDefault();
+    }
+  };
+
+  // Handle mouse move for dragging editing point along measurement line
+  const handleCanvasMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingPoint || !editingPoint || !dragStartRef.current || !cameraRef.current) return;
+    
+    const annotation = annotations.find(a => a.id === editingPoint.annotationId);
+    if (!annotation || !onAnnotationUpdate) return;
+    
+    // Calculate direction vector of the measurement line
+    const direction = new THREE.Vector3(
+        annotation.end.x - annotation.start.x,
+        annotation.end.y - annotation.start.y,
+        annotation.end.z - annotation.start.z
+    ).normalize();
+    
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    
+    const camera = cameraRef.current;
+    const startPoint3D = dragStartRef.current.pointPos.clone();
+    
+    // Convert current mouse position to NDC
+    const currentMouseNDC = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    
+    // Convert start mouse position to NDC
+    const startMouseNDC = new THREE.Vector2(
+        ((dragStartRef.current.mousePos.x - rect.left) / rect.width) * 2 - 1,
+        -((dragStartRef.current.mousePos.y - rect.top) / rect.height) * 2 + 1
+    );
+    
+    // Get the depth of the editing point in NDC space
+    const startPointNDC = startPoint3D.clone().project(camera);
+    const depth = startPointNDC.z;
+    
+    // Unproject both mouse positions to world space at the same depth
+    const currentWorld = new THREE.Vector3(currentMouseNDC.x, currentMouseNDC.y, depth).unproject(camera);
+    const startWorld = new THREE.Vector3(startMouseNDC.x, startMouseNDC.y, depth).unproject(camera);
+    
+    // Get the world-space movement delta
+    const worldDelta = currentWorld.sub(startWorld);
+    
+    // Project onto the measurement line direction to get movement along the line
+    const worldMovement = worldDelta.dot(direction);
+    
+    // Apply movement along the line direction
+    const movement = direction.clone().multiplyScalar(worldMovement);
+    
+    let newStart = { ...annotation.start };
+    let newEnd = { ...annotation.end };
+    
+    if (editingPoint.isStart) {
+        newStart = {
+            x: dragStartRef.current.pointPos.x + movement.x,
+            y: dragStartRef.current.pointPos.y + movement.y,
+            z: dragStartRef.current.pointPos.z + movement.z
+        };
+    } else {
+        newEnd = {
+            x: dragStartRef.current.pointPos.x + movement.x,
+            y: dragStartRef.current.pointPos.y + movement.y,
+            z: dragStartRef.current.pointPos.z + movement.z
+        };
+    }
+    
+    // Recalculate distance
+    const distanceInViewUnits = calculateDistance(newStart, newEnd);
+    const distanceFeet = distanceInViewUnits / originalScaleFactorRef.current;
+    
+    onAnnotationUpdate({
+        ...annotation,
+        start: newStart,
+        end: newEnd,
+        distanceFeet
+    });
+  }, [isDraggingPoint, editingPoint, annotations, onAnnotationUpdate]);
+
+  // Handle mouse up to finish dragging
+  const handleCanvasMouseUp = useCallback(() => {
+    if (isDraggingRef.current) {
+        setIsDraggingPoint(false);
+        isDraggingRef.current = false;
+        dragStartRef.current = null;
+        // Re-enable orbit controls after drag
+        if (controlsRef.current) {
+            controlsRef.current.enabled = true;
+        }
+    }
+  }, []);
+
+  // Add global mouse up listener for drag end detection
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+        if (isDraggingRef.current) {
+            setIsDraggingPoint(false);
+            isDraggingRef.current = false;
+            dragStartRef.current = null;
+            // Re-enable orbit controls after drag ends
+            if (controlsRef.current) {
+                controlsRef.current.enabled = true;
+            }
+        }
+    };
+    
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, []);
 
   const handleDeleteSelected = () => {
       if (selectedAnnotationId && onAnnotationDelete) {
@@ -224,14 +602,109 @@ const Viewer: React.FC<ViewerProps> = ({
           // Enter mode
           setIsDeleteMode(true);
           setIsEditing(false); // Ensure not editing
+          setEditingPoint(null); // Clear point editing
           setSelectedAnnotationId(null); // Clear single selection
           onAnnotationSelect?.(null);
       }
   };
 
-  // Handle Delete/Backspace key
+  // Helper to compute perpendicular basis vectors for arrow key movement
+  const computePerpendicularBasis = useCallback((start: ThreeDPoint, end: ThreeDPoint) => {
+    const direction = new THREE.Vector3(
+        end.x - start.x,
+        end.y - start.y,
+        end.z - start.z
+    ).normalize();
+    
+    // Use world up (Y-axis) to compute first perpendicular vector
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    
+    // If direction is nearly parallel to world up, use X-axis instead
+    let perpendicular1: THREE.Vector3;
+    if (Math.abs(direction.dot(worldUp)) > 0.99) {
+        const worldX = new THREE.Vector3(1, 0, 0);
+        perpendicular1 = new THREE.Vector3().crossVectors(direction, worldX).normalize();
+    } else {
+        perpendicular1 = new THREE.Vector3().crossVectors(direction, worldUp).normalize();
+    }
+    
+    // Second perpendicular vector is cross product of direction and first perpendicular
+    const perpendicular2 = new THREE.Vector3().crossVectors(direction, perpendicular1).normalize();
+    
+    return { perpendicular1, perpendicular2, direction };
+  }, []);
+
+  // Handle Delete/Backspace key, Escape, and Arrow keys for point editing
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+        // Escape key - exit editing mode
+        if (e.key === 'Escape' && editingPoint) {
+            setEditingPoint(null);
+            return;
+        }
+        
+        // Arrow keys - move editing point on perpendicular plane
+        if (editingPoint && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault();
+            
+            const annotation = annotations.find(a => a.id === editingPoint.annotationId);
+            if (!annotation || !onAnnotationUpdate) return;
+            
+            // Step size: ~1 inch in feet (1/12), scaled to view units
+            const stepSize = (1 / 12) * originalScaleFactorRef.current;
+            
+            const { perpendicular1, perpendicular2 } = computePerpendicularBasis(annotation.start, annotation.end);
+            
+            // Map arrow keys to perpendicular directions
+            let movement = new THREE.Vector3();
+            switch (e.key) {
+                case 'ArrowUp':
+                    movement = perpendicular2.clone().multiplyScalar(-stepSize);
+                    break;
+                case 'ArrowDown':
+                    movement = perpendicular2.clone().multiplyScalar(stepSize);
+                    break;
+                case 'ArrowLeft':
+                    movement = perpendicular1.clone().multiplyScalar(stepSize);
+                    break;
+                case 'ArrowRight':
+                    movement = perpendicular1.clone().multiplyScalar(-stepSize);
+                    break;
+            }
+            
+            // Apply movement to the appropriate point
+            let newStart = { ...annotation.start };
+            let newEnd = { ...annotation.end };
+            
+            if (editingPoint.isStart) {
+                newStart = {
+                    x: annotation.start.x + movement.x,
+                    y: annotation.start.y + movement.y,
+                    z: annotation.start.z + movement.z
+                };
+            } else {
+                newEnd = {
+                    x: annotation.end.x + movement.x,
+                    y: annotation.end.y + movement.y,
+                    z: annotation.end.z + movement.z
+                };
+            }
+            
+            // Recalculate distance
+            const distanceInViewUnits = calculateDistance(newStart, newEnd);
+            const distanceFeet = distanceInViewUnits / originalScaleFactorRef.current;
+            
+            onAnnotationUpdate({
+                ...annotation,
+                start: newStart,
+                end: newEnd,
+                distanceFeet
+            });
+            
+            return;
+        }
+        
+        // Delete/Backspace keys
         if ((e.key === 'Delete' || e.key === 'Backspace')) {
             if (isDeleteMode && annotationsToDelete.length > 0) {
                  annotationsToDelete.forEach(id => onAnnotationDelete?.(id));
@@ -243,7 +716,7 @@ const Viewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete]);
+  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete, editingPoint, annotations, onAnnotationUpdate, computePerpendicularBasis]);
 
 
   useEffect(() => {
@@ -259,7 +732,7 @@ const Viewer: React.FC<ViewerProps> = ({
     scene.background = new THREE.Color(0x111827); // bg-gray-900
 
     // Camera setup
-    const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.001, 1000);
     cameraRef.current = camera;
     camera.position.z = 5;
 
@@ -313,10 +786,30 @@ const Viewer: React.FC<ViewerProps> = ({
         model.position.sub(center);
         
         const size = box.getSize(new THREE.Vector3());
+        
+        // === DEBUG: Log dimensional data from GLB ===
+        console.log('=== GLB MODEL DIMENSIONAL DATA ===');
+        console.log('Asset Metadata:', gltf.asset);
+        console.log('Original dimensions (glTF spec = meters):');
+        console.log('  Width (X):', size.x.toFixed(4), 'm =', (size.x * 3.28084).toFixed(2), 'ft =', (size.x * 3.28084 * 12).toFixed(2), 'in');
+        console.log('  Height (Y):', size.y.toFixed(4), 'm =', (size.y * 3.28084).toFixed(2), 'ft =', (size.y * 3.28084 * 12).toFixed(2), 'in');
+        console.log('  Depth (Z):', size.z.toFixed(4), 'm =', (size.z * 3.28084).toFixed(2), 'ft =', (size.z * 3.28084 * 12).toFixed(2), 'in');
+        console.log('Bounding Box Min:', box.min);
+        console.log('Bounding Box Max:', box.max);
+        console.log('=================================');
+        // === END DEBUG ===
+        
         const maxDim = Math.max(size.x, size.y, size.z);
         const cameraDistance = 5; // Adjust this value to control zoom
         const scale = cameraDistance / maxDim;
         model.scale.set(scale, scale, scale);
+        
+        // Store the scale factor for measurement calculations
+        originalScaleFactorRef.current = scale;
+        
+        // Log the scale factor being applied
+        console.log('Scale factor applied to fit view:', scale);
+        console.log('To get real measurements, divide by this scale factor');
         
         scene.add(model);
         
@@ -334,6 +827,10 @@ const Viewer: React.FC<ViewerProps> = ({
     
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
+      // Safety check: ensure controls are enabled unless we're actively dragging a point
+      if (!isDraggingRef.current && !controls.enabled) {
+        controls.enabled = true;
+      }
       controls.update();
       renderer.render(scene, camera);
     };
@@ -401,8 +898,13 @@ const Viewer: React.FC<ViewerProps> = ({
     <div className="w-full h-full flex flex-col relative">
       <div 
         ref={mountRef} 
-        className={`w-full h-full rounded-lg ${isEditing ? 'cursor-crosshair' : 'cursor-default'}`}
+        className={`w-full h-full rounded-lg ${(isEditing || isMeasuring) ? 'cursor-crosshair' : editingPoint ? 'cursor-move' : 'cursor-default'}`}
         onClick={handleCanvasClick}
+        onDoubleClick={handleCanvasDoubleClick}
+        onMouseDown={handleCanvasMouseDown}
+        onMouseMove={handleCanvasMouseMove}
+        onMouseUp={handleCanvasMouseUp}
+        onContextMenu={handleContextMenu}
       />
       
       {/* This input is always in the DOM, so it can be triggered from either button */}
@@ -419,7 +921,7 @@ const Viewer: React.FC<ViewerProps> = ({
       {modelLoaded && !isLoading && (
         <>
             
-             {/* Edit Mode Toggle & Delete Button */}
+             {/* Edit Mode Toggle, Measure & Delete Buttons */}
             <div className="absolute top-4 right-4 flex gap-2">
                  <button
                      onClick={handleToggleDeleteMode}
@@ -434,11 +936,61 @@ const Viewer: React.FC<ViewerProps> = ({
                      {isDeleteMode ? (annotationsToDelete.length > 0 ? `Delete (${annotationsToDelete.length})` : 'Done') : 'Delete'}
                  </button>
 
+                 {/* Measure Button */}
+                 <button
+                     onClick={() => {
+                         if (isDeleteMode) {
+                             setIsDeleteMode(false);
+                             setAnnotationsToDelete([]);
+                         }
+                         if (isEditing) {
+                             setIsEditing(false);
+                         }
+                         // Clear point editing when entering measure mode
+                         if (editingPoint) {
+                             setEditingPoint(null);
+                         }
+                         const newMeasuringState = !isMeasuring;
+                         setIsMeasuring(newMeasuringState);
+                         if (!newMeasuringState) {
+                             // Exiting measure mode - clear temp marker
+                             setMeasureStartPoint(null);
+                             updateTempMarker(null);
+                         }
+                         setSelectedAnnotationId(null);
+                         onAnnotationSelect?.(null);
+                     }}
+                     className={`px-4 py-2 backdrop-blur-sm border text-white text-sm font-semibold rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 transition-colors pointer-events-auto flex items-center gap-2 ${
+                         isMeasuring 
+                             ? 'bg-green-600 hover:bg-green-700 border-green-500/50 focus:ring-green-500 ring-2 ring-green-500' 
+                             : 'bg-gray-800/80 border-gray-700/50 hover:bg-gray-700 focus:ring-green-500'
+                     }`}
+                     aria-label={isMeasuring ? "Exit Measure Mode" : "Enter Measure Mode"}
+                 >
+                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                         <path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/>
+                         <path d="m14.5 12.5 2-2"/>
+                         <path d="m11.5 9.5 2-2"/>
+                         <path d="m8.5 6.5 2-2"/>
+                         <path d="m17.5 15.5 2-2"/>
+                     </svg>
+                     {isMeasuring ? (measureStartPoint ? 'Ctrl+Click end' : 'Ctrl+Click start') : 'Measure'}
+                 </button>
+
                  <button
                    onClick={() => {
                        if (isDeleteMode) {
                            setIsDeleteMode(false);
                            setAnnotationsToDelete([]);
+                       }
+                       if (isMeasuring) {
+                           setIsMeasuring(false);
+                           setMeasureStartPoint(null);
+                           updateTempMarker(null);
+                       }
+                       // Clear point editing when entering annotate mode
+                       if (editingPoint) {
+                           setEditingPoint(null);
                        }
                        setIsEditing(!isEditing);
                        // Deselect when toggling edit mode

@@ -1063,6 +1063,20 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         setHighlightedInsightId(null); // Clear selection
     };
 
+    const handleThreeDAnnotationUpdate = (annotation: ThreeDAnnotation) => {
+        setScans(prev => prev.map(scan => {
+            if (scan.date === currentScanDate) {
+                return {
+                    ...scan,
+                    threeDAnnotations: (scan.threeDAnnotations || []).map(a => 
+                        a.id === annotation.id ? annotation : a
+                    )
+                };
+            }
+            return scan;
+        }));
+    };
+
     // --- Tree Action Handlers ---
 
     // Helper to check if a node is in the Project Master tree (project-level)
@@ -1288,6 +1302,24 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 return state;
             });
         } else {
+            // Clean up annotations for deleted files
+            const fileNodesToDelete = node.type === 'folder' 
+                ? flattenTree([node]).filter(n => n.type === 'file')
+                : [node];
+
+            const fileIdsToDelete = fileNodesToDelete.map(n => {
+                // Find matching centerViewerFile to get storageId
+                const match = currentScanViewerState.centerViewerFiles.find(f =>
+                    f.file === n.file ||
+                    (f.name === n.name && f.file.size === n.file?.size && f.file.type === n.file?.type)
+                );
+                return match?.storageId || n.name;
+            }).filter(Boolean);
+
+            if (fileIdsToDelete.length > 0) {
+                setFileAnnotations(prev => prev.filter(a => !fileIdsToDelete.includes(a.fileId)));
+            }
+
             updateCurrentScanViewerState(state => {
                 const newTree = removeNodeFromTree(state.fileSystemTree, node.id);
 
@@ -1308,7 +1340,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 updatePersistenceFromTree();
             }, 0);
         }
-    }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree, isProjectMasterNode, projectMasterFiles]);
+    }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree, isProjectMasterNode, projectMasterFiles, currentScanViewerState]);
 
     const handleMoveNode = useCallback((nodeId: string, targetParentId: string | undefined) => {
         // Check if node and target are both in Project Master tree or both in scan tree
@@ -2339,6 +2371,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onModelUpload={handleModelUpload}
                             annotations={currentScan?.threeDAnnotations}
                             onAnnotationAdd={handleThreeDAnnotationAdd}
+                            onAnnotationUpdate={handleThreeDAnnotationUpdate}
                             onPointCreated={handleThreeDPointCreated}
                             highlightedPointIds={glbHighlightedPointIds}
                             onAnnotationSelect={handleThreeDAnnotationSelect}
@@ -2594,6 +2627,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                 onModelUpload={handleModelUpload}
                                 annotations={currentScan?.threeDAnnotations}
                                 onAnnotationAdd={handleThreeDAnnotationAdd}
+                                onAnnotationUpdate={handleThreeDAnnotationUpdate}
                                 onPointCreated={handleThreeDPointCreated}
                                 highlightedPointIds={highlightedThreeDPointIds}
                                 onAnnotationSelect={handleThreeDAnnotationSelect}
