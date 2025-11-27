@@ -1798,6 +1798,7 @@ const Viewer: React.FC<ViewerProps> = ({
                   <span className="text-xs text-gray-400 font-medium">
                     Top-Down Preview
                   </span>
+
                   <button
                     onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
                     className="p-1 hover:bg-gray-700 rounded transition-colors"
@@ -1822,16 +1823,36 @@ const Viewer: React.FC<ViewerProps> = ({
                 {/* Canvas Container */}
                 <div className={`${isPreviewExpanded ? 'pt-9' : 'pt-8'} h-full flex`}>
                   {/* Preview Canvas */}
-                  <div className={`${isPreviewExpanded ? 'w-[280px]' : 'w-full'} h-full relative`}>
-                    <canvas 
-                      ref={previewCanvasRef} 
-                      width={isPreviewExpanded ? 280 : 192} 
-                      height={isPreviewExpanded ? 440 : 160} 
-                      className="w-full h-full"
-                    />
-                    {/* Point/Wall count overlay */}
-                    <div className="absolute bottom-2 left-2 text-xs text-gray-500 font-mono">
-                      {previewPoints.length.toLocaleString()} pts | {previewWalls.length} walls
+                  <div className={`${isPreviewExpanded ? 'w-[280px]' : 'w-full'} h-full flex flex-col`}>
+                    <div className="relative flex-1 min-h-0">
+                      <canvas 
+                        ref={previewCanvasRef} 
+                        width={isPreviewExpanded ? 280 : 192} 
+                        height={isPreviewExpanded ? 440 : 160} 
+                        className="w-full h-full"
+                      />
+                      {/* Point/Wall count overlay */}
+                      <div className="absolute bottom-2 left-2 text-xs text-gray-500 font-mono pointer-events-none">
+                        {previewPoints.length.toLocaleString()} pts | {previewWalls.length} walls
+                      </div>
+                    </div>
+                    
+                    {/* Thickness control */}
+                    <div className="flex items-center gap-2 p-2 bg-gray-800/50 border-t border-gray-700/50">
+                      <label className="text-gray-400 text-xs whitespace-nowrap">Thickness:</label>
+                      <input
+                        type="range"
+                        min="2"
+                        max="24"
+                        step="1"
+                        value={sliceBoxConfig.thicknessInches}
+                        onChange={(e) => {
+                          const thickness = parseInt(e.target.value);
+                          setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
+                        }}
+                        className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                      />
+                      <span className="text-cyan-400 text-xs font-mono w-6 text-right">{sliceBoxConfig.thicknessInches}"</span>
                     </div>
                   </div>
                   
@@ -2090,113 +2111,6 @@ const Viewer: React.FC<ViewerProps> = ({
               </div>
             )}
 
-            {/* Slice Box Controls */}
-            {isSliceBoxActive && sliceBoxConfig && (
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-4 bg-gray-900/90 backdrop-blur-sm border border-gray-700/50 rounded-xl px-6 py-4 pointer-events-auto">
-                {/* Thickness control */}
-                <div className="flex items-center gap-3">
-                  <label className="text-gray-400 text-sm whitespace-nowrap">Thickness:</label>
-                  <input
-                    type="range"
-                    min="2"
-                    max="24"
-                    step="1"
-                    value={sliceBoxConfig.thicknessInches}
-                    onChange={(e) => {
-                      const thickness = parseInt(e.target.value);
-                      setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
-                    }}
-                    className="w-24 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                  />
-                  <span className="text-cyan-400 text-sm font-mono w-12">{sliceBoxConfig.thicknessInches}"</span>
-                </div>
-
-                {/* Divider */}
-                <div className="w-px h-8 bg-gray-700"></div>
-
-                {/* Instructions */}
-                <p className="text-gray-400 text-sm">
-                  {isSliceSelectedForMove 
-                    ? 'WASD to move XZ | ↑↓ height | Dbl-click/Esc to exit' 
-                    : 'Ctrl + drag handles to resize | Dbl-click to move XZ | ↑↓ height'}
-                </p>
-
-                {/* Divider */}
-                <div className="w-px h-8 bg-gray-700"></div>
-
-                {/* Action buttons */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      console.log('[Floor Plan] Generating with slice box config:', sliceBoxConfig);
-                      console.log('[Floor Plan] Wall detection config:', wallDetectionConfig);
-                      
-                      if (sceneRef.current && sliceBoxConfig) {
-                        setIsProcessing(true);
-                        setActiveFeature('floor-plan');
-                        
-                        // Build full config with all parameters
-                        const fullConfig: WallDetectionConfig = {
-                          ...wallDetectionConfig,
-                          dbscanEps: dbscanEps,
-                          dbscanMinPoints: dbscanMinPoints,
-                          snapThresholdFeet: snapThreshold,
-                          mergeAngleTolerance: mergeTolerance.angle,
-                          mergeDistanceTolerance: mergeTolerance.distance,
-                        };
-                        
-                        // Generate floor plan data from scene with full config
-                        const data = generateFloorPlan(
-                          sceneRef.current,
-                          sliceBoxConfig,
-                          originalScaleFactorRef.current,
-                          fullConfig
-                        );
-                        
-                        // Generate SVG with current layer settings
-                        const svg = generateFloorPlanSVG(data, {
-                          width: 1000,
-                          height: 800,
-                          showWalls: true,
-                          showDimensions: floorPlanLayers.dimensions,
-                          showWallThickness: floorPlanLayers.wallThickness
-                        });
-                        
-                        // Update state
-                        setFloorPlanData(data);
-                        setFloorPlanSVG(svg);
-                        setIsSliceBoxActive(false);
-                        setSliceBoxConfig(null);
-                        setIsSliceSelectedForMove(false);
-                        setShowFloorPlanResults(true);
-                        setIsProcessing(false);
-                        setActiveFeature(null);
-                        
-                        // Log results
-                        const stats = calculateFloorPlanStats(data);
-                        console.log('[Floor Plan] Generation complete:', stats);
-                      }
-                    }}
-                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                    Generate
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsSliceBoxActive(false);
-                      setSliceBoxConfig(null);
-                      setIsSliceSelectedForMove(false);
-                    }}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm font-semibold rounded-lg transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
         </>
       )}
 
