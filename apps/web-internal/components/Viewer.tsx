@@ -132,6 +132,7 @@ const Viewer: React.FC<ViewerProps> = ({
   const [snapThreshold, setSnapThreshold] = useState(1.0);
   const [mergeTolerance, setMergeTolerance] = useState({ angle: 0.1, distance: 0.5 });
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
+  const [previewPointSize, setPreviewPointSize] = useState(2);
   
   // Preview walls state (for real-time preview)
   const [previewWalls, setPreviewWalls] = useState<WallSegment[]>([]);
@@ -528,12 +529,12 @@ const Viewer: React.FC<ViewerProps> = ({
       y: offsetY + (p.y - bounds.minY) * scale,
     });
     
-    // Draw points (dimmer when walls are present)
-    ctx.fillStyle = previewWalls.length > 0 ? '#374151' : '#00bcd4';
+    // Draw points with adjustable size and uniform high-contrast color
+    ctx.fillStyle = '#00bcd4';
     for (const p of previewPoints) {
       const { x, y } = transform(p);
       ctx.beginPath();
-      ctx.arc(x, y, previewWalls.length > 0 ? 1 : 1.5, 0, Math.PI * 2);
+      ctx.arc(x, y, previewPointSize, 0, Math.PI * 2);
       ctx.fill();
     }
     
@@ -562,7 +563,7 @@ const Viewer: React.FC<ViewerProps> = ({
         ctx.fill();
       }
     }
-  }, [previewPoints, previewWalls]);
+  }, [previewPoints, previewWalls, previewPointSize]);
 
   // Helper to create/update temporary start marker for measurements
   const updateTempMarker = (point: ThreeDPoint | null) => {
@@ -1837,6 +1838,23 @@ const Viewer: React.FC<ViewerProps> = ({
                   {/* Algorithm Controls - Only visible when expanded */}
                   {isPreviewExpanded && (
                     <div className="flex-1 border-l border-gray-700/50 overflow-y-auto p-3 space-y-4">
+                      {/* Point Size Control */}
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-400">Point Size</span>
+                          <span className="text-cyan-400 font-mono">{previewPointSize.toFixed(1)} px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="5"
+                          step="0.5"
+                          value={previewPointSize}
+                          onChange={(e) => setPreviewPointSize(parseFloat(e.target.value))}
+                          className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                      </div>
+
                       {/* Detection Method Toggle */}
                       <div>
                         <label className="text-xs text-gray-400 font-medium block mb-2">Detection Method</label>
