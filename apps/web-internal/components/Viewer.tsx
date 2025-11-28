@@ -10,6 +10,7 @@ import FloorPlanResultsPanel from './FloorPlanResultsPanel';
 import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D, WallDetectionConfig, DEFAULT_WALL_DETECTION_CONFIG, dbscanCluster, fitLineToCluster, mergeCollinearWalls, snapWallsToCorners, WallSegment, splitClustersAtCorners, detectWallsRANSAC, calculateAdaptiveDBSCANParams } from '../lib/floorPlanGenerator';
 import { generateFloorPlanSVG, downloadSvg } from '../lib/floorPlanSvg';
 import { exportToJSON, exportToDXF, exportToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
+import { Rnd } from 'react-rnd';
 
 const EMPTY_ARRAY: string[] = [];
 
@@ -132,6 +133,9 @@ const Viewer: React.FC<ViewerProps> = ({
   const [snapThreshold, setSnapThreshold] = useState(1.0);
   const [mergeTolerance, setMergeTolerance] = useState({ angle: 0.1, distance: 0.5 });
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
+  const [previewPanelPos, setPreviewPanelPos] = useState({ x: 0, y: 0 });
+  const [previewPanelSize, setPreviewPanelSize] = useState({ width: 192, height: 192 });
+  const [previewPanelInitialized, setPreviewPanelInitialized] = useState(false);
   const [previewPointSize, setPreviewPointSize] = useState(2);
   
   // Preview walls state (for real-time preview)
@@ -564,6 +568,25 @@ const Viewer: React.FC<ViewerProps> = ({
       }
     }
   }, [previewPoints, previewWalls, previewPointSize]);
+
+  // Initialize preview panel position when it first becomes visible
+  useEffect(() => {
+    if (isSliceBoxActive && sliceBoxConfig && !previewPanelInitialized && mountRef.current) {
+      const rect = mountRef.current.getBoundingClientRect();
+      // Position at bottom-right with some padding
+      setPreviewPanelPos({
+        x: rect.width - 192 - 16,
+        y: rect.height - 192 - 96
+      });
+      setPreviewPanelInitialized(true);
+    }
+    // Reset when slice box is deactivated
+    if (!isSliceBoxActive) {
+      setPreviewPanelInitialized(false);
+      setPreviewPanelSize({ width: 192, height: 192 });
+      setIsPreviewExpanded(false);
+    }
+  }, [isSliceBoxActive, sliceBoxConfig, previewPanelInitialized]);
 
   // Helper to create/update temporary start marker for measurements
   const updateTempMarker = (point: ThreeDPoint | null) => {
@@ -1784,23 +1807,69 @@ const Viewer: React.FC<ViewerProps> = ({
               />
             )}
 
-            {/* Slice Preview Panel - Expandable */}
+            {/* Slice Preview Panel - Draggable & Resizable */}
             {isSliceBoxActive && sliceBoxConfig && (
-              <div 
-                className={`absolute bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-lg overflow-hidden pointer-events-auto shadow-xl transition-all duration-300 ease-in-out ${
-                  isPreviewExpanded 
-                    ? 'bottom-24 right-4 w-[520px] h-[480px]' 
-                    : 'bottom-24 right-4 w-48 h-48'
-                }`}
+              <Rnd
+                className="bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-lg overflow-hidden pointer-events-auto shadow-xl"
+                position={previewPanelPos}
+                size={previewPanelSize}
+                minWidth={192}
+                minHeight={192}
+                maxWidth={800}
+                maxHeight={700}
+                bounds="parent"
+                dragHandleClassName="preview-drag-handle"
+                enableResizing={{
+                  top: true,
+                  right: true,
+                  bottom: true,
+                  left: true,
+                  topRight: true,
+                  bottomRight: true,
+                  bottomLeft: true,
+                  topLeft: true,
+                }}
+                onDragStop={(e, d) => {
+                  setPreviewPanelPos({ x: d.x, y: d.y });
+                }}
+                onResizeStop={(e, direction, ref, delta, position) => {
+                  setPreviewPanelSize({
+                    width: ref.offsetWidth,
+                    height: ref.offsetHeight,
+                  });
+                  setPreviewPanelPos(position);
+                }}
               >
-                {/* Header */}
-                <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gray-800/80 border-b border-gray-700/50 z-20">
+                {/* Header - Drag Handle */}
+                <div className="preview-drag-handle absolute top-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gray-800/80 border-b border-gray-700/50 z-20 cursor-move select-none">
                   <span className="text-xs text-gray-400 font-medium">
                     Top-Down Preview
                   </span>
 
                   <button
-                    onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
+                    onClick={() => {
+                      const newExpanded = !isPreviewExpanded;
+                      setIsPreviewExpanded(newExpanded);
+                      if (newExpanded) {
+                        // Expand to larger size
+                        const newWidth = 520;
+                        const newHeight = 480;
+                        // Adjust position if it would go off-screen
+                        const rect = mountRef.current?.getBoundingClientRect();
+                        if (rect) {
+                          const maxX = rect.width - newWidth;
+                          const maxY = rect.height - newHeight;
+                          setPreviewPanelPos(prev => ({
+                            x: Math.min(prev.x, Math.max(0, maxX)),
+                            y: Math.min(prev.y, Math.max(0, maxY)),
+                          }));
+                        }
+                        setPreviewPanelSize({ width: newWidth, height: newHeight });
+                      } else {
+                        // Collapse to smaller size
+                        setPreviewPanelSize({ width: 192, height: 192 });
+                      }
+                    }}
                     className="p-1 hover:bg-gray-700 rounded transition-colors"
                     title={isPreviewExpanded ? 'Collapse' : 'Expand'}
                   >
@@ -1821,14 +1890,14 @@ const Viewer: React.FC<ViewerProps> = ({
                 </div>
                 
                 {/* Canvas Container */}
-                <div className={`${isPreviewExpanded ? 'pt-9' : 'pt-8'} h-full flex`}>
+                <div className="pt-9 h-full flex">
                   {/* Preview Canvas */}
-                  <div className={`${isPreviewExpanded ? 'w-[280px]' : 'w-full'} h-full flex flex-col`}>
+                  <div className="w-full h-full flex flex-col">
                     <div className="relative flex-1 min-h-0">
                       <canvas 
                         ref={previewCanvasRef} 
-                        width={isPreviewExpanded ? 280 : 192} 
-                        height={isPreviewExpanded ? 440 : 160} 
+                        width={Math.max(100, previewPanelSize.width - 16)} 
+                        height={Math.max(100, previewPanelSize.height - 80)} 
                         className="w-full h-full"
                       />
                       {/* Point/Wall count overlay */}
@@ -1837,34 +1906,28 @@ const Viewer: React.FC<ViewerProps> = ({
                       </div>
                     </div>
                     
-                    {/* Thickness control */}
-                    <div className="flex items-center gap-2 p-2 bg-gray-800/50 border-t border-gray-700/50">
-                      <label className="text-gray-400 text-xs whitespace-nowrap">Thickness:</label>
-                      <input
-                        type="range"
-                        min="2"
-                        max="24"
-                        step="1"
-                        value={sliceBoxConfig.thicknessInches}
-                        onChange={(e) => {
-                          const thickness = parseInt(e.target.value);
-                          setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
-                        }}
-                        className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                      />
-                      <span className="text-cyan-400 text-xs font-mono w-6 text-right">{sliceBoxConfig.thicknessInches}"</span>
-                    </div>
-                  </div>
-                  
-                  {/* Algorithm Controls - Only visible when expanded */}
-                  {isPreviewExpanded && (
-                    <div className="flex-1 border-l border-gray-700/50 overflow-y-auto p-3 space-y-4">
-                      {/* Point Size Control */}
-                      <div>
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-gray-400">Point Size</span>
-                          <span className="text-cyan-400 font-mono">{previewPointSize.toFixed(1)} px</span>
-                        </div>
+                    {/* Bottom controls - Thickness and Point Size */}
+                    <div className="flex items-center gap-4 p-2 bg-gray-800/50 border-t border-gray-700/50">
+                      {/* Thickness control */}
+                      <div className="flex items-center gap-2 flex-1">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Thickness:</label>
+                        <input
+                          type="range"
+                          min="2"
+                          max="24"
+                          step="1"
+                          value={sliceBoxConfig.thicknessInches}
+                          onChange={(e) => {
+                            const thickness = parseInt(e.target.value);
+                            setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
+                          }}
+                          className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <span className="text-cyan-400 text-xs font-mono w-6 text-right">{sliceBoxConfig.thicknessInches}"</span>
+                      </div>
+                      {/* Point Size control */}
+                      <div className="flex items-center gap-2 flex-1">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Point Size:</label>
                         <input
                           type="range"
                           min="0.5"
@@ -1874,241 +1937,12 @@ const Viewer: React.FC<ViewerProps> = ({
                           onChange={(e) => setPreviewPointSize(parseFloat(e.target.value))}
                           className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                         />
+                        <span className="text-cyan-400 text-xs font-mono w-10 text-right">{previewPointSize.toFixed(1)} px</span>
                       </div>
-
-                      {/* Detection Method Toggle */}
-                      <div>
-                        <label className="text-xs text-gray-400 font-medium block mb-2">Detection Method</label>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => setWallDetectionConfig(prev => ({ ...prev, useRANSAC: true }))}
-                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-l transition-colors ${
-                              wallDetectionConfig.useRANSAC 
-                                ? 'bg-cyan-600 text-white' 
-                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                            }`}
-                          >
-                            RANSAC
-                          </button>
-                          <button
-                            onClick={() => setWallDetectionConfig(prev => ({ ...prev, useRANSAC: false }))}
-                            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-r transition-colors ${
-                              !wallDetectionConfig.useRANSAC 
-                                ? 'bg-cyan-600 text-white' 
-                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                            }`}
-                          >
-                            DBSCAN
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* RANSAC Parameters */}
-                      {wallDetectionConfig.useRANSAC && (
-                        <div className="space-y-3">
-                          <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">RANSAC</div>
-                          
-                          {/* Distance Threshold */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Distance Threshold</span>
-                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.distanceThreshold.toFixed(3)}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="0.001"
-                              max="0.05"
-                              step="0.001"
-                              value={wallDetectionConfig.distanceThreshold}
-                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, distanceThreshold: parseFloat(e.target.value) }))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-
-                          {/* Min Wall Length */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Min Wall Length</span>
-                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.minWallLengthFeet.toFixed(1)} ft</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="0.5"
-                              max="10"
-                              step="0.5"
-                              value={wallDetectionConfig.minWallLengthFeet}
-                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, minWallLengthFeet: parseFloat(e.target.value) }))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-
-                          {/* Max Walls */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Max Walls</span>
-                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.maxWalls}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="5"
-                              max="100"
-                              step="5"
-                              value={wallDetectionConfig.maxWalls}
-                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, maxWalls: parseInt(e.target.value) }))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-
-                          {/* Iterations */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Iterations</span>
-                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.ransacIterations}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="50"
-                              max="500"
-                              step="25"
-                              value={wallDetectionConfig.ransacIterations}
-                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, ransacIterations: parseInt(e.target.value) }))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-
-                          {/* Min Points */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Min Points</span>
-                              <span className="text-cyan-400 font-mono">{wallDetectionConfig.minPoints}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="5"
-                              max="100"
-                              step="5"
-                              value={wallDetectionConfig.minPoints}
-                              onChange={(e) => setWallDetectionConfig(prev => ({ ...prev, minPoints: parseInt(e.target.value) }))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* DBSCAN Parameters */}
-                      {!wallDetectionConfig.useRANSAC && (
-                        <div className="space-y-3">
-                          <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">DBSCAN</div>
-                          
-                          {/* Epsilon */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Epsilon (eps)</span>
-                              <span className="text-cyan-400 font-mono">{dbscanEps.toFixed(3)}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="0.002"
-                              max="0.05"
-                              step="0.001"
-                              value={dbscanEps}
-                              onChange={(e) => setDbscanEps(parseFloat(e.target.value))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-
-                          {/* Min Points */}
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-gray-400">Min Points</span>
-                              <span className="text-cyan-400 font-mono">{dbscanMinPoints}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="5"
-                              max="50"
-                              step="1"
-                              value={dbscanMinPoints}
-                              onChange={(e) => setDbscanMinPoints(parseInt(e.target.value))}
-                              className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Post-Processing */}
-                      <div className="space-y-3 pt-2 border-t border-gray-700/50">
-                        <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">Post-Processing</div>
-                        
-                        {/* Snap Threshold */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-gray-400">Snap Threshold</span>
-                            <span className="text-cyan-400 font-mono">{snapThreshold.toFixed(2)} ft</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0.25"
-                            max="3"
-                            step="0.25"
-                            value={snapThreshold}
-                            onChange={(e) => setSnapThreshold(parseFloat(e.target.value))}
-                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                          />
-                        </div>
-
-                        {/* Merge Angle Tolerance */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-gray-400">Merge Angle</span>
-                            <span className="text-cyan-400 font-mono">{(mergeTolerance.angle * 180 / Math.PI).toFixed(1)}°</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0"
-                            max="0.52"
-                            step="0.017"
-                            value={mergeTolerance.angle}
-                            onChange={(e) => setMergeTolerance(prev => ({ ...prev, angle: parseFloat(e.target.value) }))}
-                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                          />
-                        </div>
-
-                        {/* Merge Distance */}
-                        <div>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-gray-400">Merge Distance</span>
-                            <span className="text-cyan-400 font-mono">{mergeTolerance.distance.toFixed(2)} ft</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0.1"
-                            max="2"
-                            step="0.1"
-                            value={mergeTolerance.distance}
-                            onChange={(e) => setMergeTolerance(prev => ({ ...prev, distance: parseFloat(e.target.value) }))}
-                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Reset Button */}
-                      <button
-                        onClick={() => {
-                          setWallDetectionConfig({ ...DEFAULT_WALL_DETECTION_CONFIG });
-                          setDbscanEps(0.008);
-                          setDbscanMinPoints(20);
-                          setSnapThreshold(1.0);
-                          setMergeTolerance({ angle: 0.1, distance: 0.5 });
-                        }}
-                        className="w-full py-1.5 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded transition-colors"
-                      >
-                        Reset to Defaults
-                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </div>
+              </Rnd>
             )}
 
         </>
