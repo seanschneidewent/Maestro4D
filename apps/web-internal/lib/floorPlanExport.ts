@@ -430,6 +430,360 @@ startxref
 }
 
 // ============================================================================
+// Floor Plan Lines PDF Export (Landscape with Rotation)
+// ============================================================================
+
+export interface FloorPlanLineData {
+  id: string;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  distanceFeet: number;
+}
+
+/**
+ * Export floor plan lines as a landscape PDF with architectural dimension lines
+ * 
+ * @param lines - Array of floor plan lines to export
+ * @param rotationDegrees - Rotation angle in degrees (0-360)
+ * @param scaleFactor - Scale factor for converting view units to feet
+ * @param filename - Output filename
+ * @param textSize - Font size for measurement text in pixels (default 10)
+ * @param sheetTitle - Optional title to display in the bottom right corner of the PDF
+ * @param lineThickness - Thickness of main drawn lines in pixels (default 2, min 1)
+ * @param dimensionLineScale - Scale factor for dimension line elements (default 1)
+ */
+export async function exportFloorPlanToPDF(
+  lines: FloorPlanLineData[],
+  rotationDegrees: number,
+  scaleFactor: number,
+  filename: string,
+  textSize: number = 10,
+  sheetTitle: string = '',
+  lineThickness: number = 2,
+  dimensionLineScale: number = 1
+): Promise<void> {
+  if (lines.length === 0) {
+    console.warn('[Floor Plan] No lines to export');
+    return;
+  }
+
+  // PDF dimensions - Letter landscape (11" x 8.5" at 72 DPI)
+  const pageWidth = 792;
+  const pageHeight = 612;
+  const margin = 54; // 0.75 inch margins
+  
+  // Calculate bounds from all line endpoints
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  
+  for (const line of lines) {
+    minX = Math.min(minX, line.start.x, line.end.x);
+    maxX = Math.max(maxX, line.start.x, line.end.x);
+    minY = Math.min(minY, line.start.y, line.end.y);
+    maxY = Math.max(maxY, line.start.y, line.end.y);
+  }
+  
+  const dataWidth = maxX - minX || 1;
+  const dataHeight = maxY - minY || 1;
+  
+  // Calculate available drawing area
+  const availableWidth = pageWidth - margin * 2;
+  const availableHeight = pageHeight - margin * 2;
+  
+  // Calculate scale to fit content
+  const fitScale = Math.min(availableWidth / dataWidth, availableHeight / dataHeight) * 0.85;
+  
+  // Create high-resolution canvas for rendering
+  const canvasScale = 3; // 3x for print quality
+  const canvas = document.createElement('canvas');
+  canvas.width = pageWidth * canvasScale;
+  canvas.height = pageHeight * canvasScale;
+  const ctx = canvas.getContext('2d');
+  
+  if (!ctx) {
+    throw new Error('Could not get canvas context');
+  }
+  
+  // Scale context for high resolution
+  ctx.scale(canvasScale, canvasScale);
+  
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, pageWidth, pageHeight);
+  
+  // Calculate center of content area
+  const centerX = pageWidth / 2;
+  const centerY = pageHeight / 2;
+  
+  // Rotation in radians
+  const rotationRad = (rotationDegrees * Math.PI) / 180;
+  
+  // Transform function: data coords -> PDF page coords (with rotation)
+  const transform = (p: { x: number; y: number }) => {
+    // Center and scale the point
+    let x = (p.x - (minX + maxX) / 2) * fitScale;
+    let y = (p.y - (minY + maxY) / 2) * fitScale;
+    
+    // Apply rotation
+    if (rotationDegrees !== 0) {
+      const cos = Math.cos(rotationRad);
+      const sin = Math.sin(rotationRad);
+      const rx = x * cos - y * sin;
+      const ry = x * sin + y * cos;
+      x = rx;
+      y = ry;
+    }
+    
+    // Translate to page center (flip Y for PDF coordinates)
+    return {
+      x: centerX + x,
+      y: centerY - y
+    };
+  };
+  
+  // Draw each line with architectural dimension annotations
+  for (const line of lines) {
+    const start = transform(line.start);
+    const end = transform(line.end);
+    
+    // Draw the main line (black, configurable thickness)
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = lineThickness;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    
+    // Draw architectural dimension line
+    drawDimensionLine(ctx, start, end, line.distanceFeet, textSize, dimensionLineScale);
+  }
+  
+  // Draw sheet title in bottom right corner
+  if (sheetTitle) {
+    ctx.font = '10px Arial, sans-serif';
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(sheetTitle, pageWidth - margin, pageHeight - margin / 2);
+  }
+  
+  // Convert canvas to JPEG and create PDF
+  const imageDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+  const pdfBytes = createPDFWithImage(imageDataUrl, pageWidth, pageHeight);
+  
+  // Download PDF
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  URL.revokeObjectURL(url);
+  
+  console.log(`[Floor Plan] Exported landscape PDF: ${filename}`);
+}
+
+/**
+ * Draw an architectural dimension line with ticks and centered text
+ *   |<---- 10' 6" ---->|
+ */
+function drawDimensionLine(
+  ctx: CanvasRenderingContext2D,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  distanceFeet: number,
+  textSize: number = 10,
+  dimensionLineScale: number = 1
+): void {
+  // Calculate line properties
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx);
+  
+  // Skip dimension for very short lines
+  if (length < 30) return;
+  
+  // Perpendicular offset for dimension line (offset from main line) - scaled
+  const dimOffset = 15 * dimensionLineScale;
+  const perpX = -Math.sin(angle) * dimOffset;
+  const perpY = Math.cos(angle) * dimOffset;
+  
+  // Dimension line endpoints
+  const dimStart = { x: start.x + perpX, y: start.y + perpY };
+  const dimEnd = { x: end.x + perpX, y: end.y + perpY };
+  
+  // Tick line length - scaled
+  const tickLength = 6 * dimensionLineScale;
+  const tickDx = -Math.sin(angle) * tickLength;
+  const tickDy = Math.cos(angle) * tickLength;
+  
+  // Draw extension lines (from main line to dimension line) - scaled width
+  ctx.strokeStyle = '#333333';
+  ctx.lineWidth = 0.5 * dimensionLineScale;
+  ctx.beginPath();
+  // Start extension line
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(dimStart.x + tickDx * 0.5, dimStart.y + tickDy * 0.5);
+  // End extension line
+  ctx.moveTo(end.x, end.y);
+  ctx.lineTo(dimEnd.x + tickDx * 0.5, dimEnd.y + tickDy * 0.5);
+  ctx.stroke();
+  
+  // Draw dimension line - scaled width
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 0.75 * dimensionLineScale;
+  ctx.beginPath();
+  ctx.moveTo(dimStart.x, dimStart.y);
+  ctx.lineTo(dimEnd.x, dimEnd.y);
+  ctx.stroke();
+  
+  // Draw ticks at endpoints
+  ctx.beginPath();
+  // Start tick
+  ctx.moveTo(dimStart.x - tickDx, dimStart.y - tickDy);
+  ctx.lineTo(dimStart.x + tickDx, dimStart.y + tickDy);
+  // End tick
+  ctx.moveTo(dimEnd.x - tickDx, dimEnd.y - tickDy);
+  ctx.lineTo(dimEnd.x + tickDx, dimEnd.y + tickDy);
+  ctx.stroke();
+  
+  // Format distance as feet and inches
+  const dimText = feetToFeetInches(distanceFeet);
+  
+  // Calculate text position (centered on dimension line)
+  const textX = (dimStart.x + dimEnd.x) / 2;
+  const textY = (dimStart.y + dimEnd.y) / 2;
+  
+  // Calculate text rotation to follow line direction (keep text readable)
+  let textAngle = angle;
+  // Flip text if it would be upside down
+  if (textAngle > Math.PI / 2) textAngle -= Math.PI;
+  if (textAngle < -Math.PI / 2) textAngle += Math.PI;
+  
+  // Draw text background (white rectangle)
+  ctx.save();
+  ctx.translate(textX, textY);
+  ctx.rotate(textAngle);
+  
+  ctx.font = `${textSize}px Arial, sans-serif`;
+  const textMetrics = ctx.measureText(dimText);
+  const textWidth = textMetrics.width + 8;
+  const textHeight = textSize * 1.4;
+  
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-textWidth / 2, -textHeight / 2, textWidth, textHeight);
+  
+  // Draw text
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(dimText, 0, 0);
+  
+  ctx.restore();
+}
+
+/**
+ * Create a PDF with an embedded JPEG image
+ * Uses a proper PDF structure with DCTDecode (JPEG) filter
+ */
+function createPDFWithImage(imageDataUrl: string, width: number, height: number): Uint8Array {
+  // Extract base64 JPEG data
+  const base64Data = imageDataUrl.split(',')[1];
+  const binaryString = atob(base64Data);
+  const imageBytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    imageBytes[i] = binaryString.charCodeAt(i);
+  }
+  
+  // Build PDF structure
+  const pdfParts: (string | Uint8Array)[] = [];
+  const offsets: number[] = [];
+  let currentOffset = 0;
+  
+  const addText = (text: string) => {
+    pdfParts.push(text);
+    currentOffset += text.length;
+  };
+  
+  const recordOffset = () => {
+    offsets.push(currentOffset);
+  };
+  
+  // PDF Header
+  addText('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n');
+  
+  // Object 1: Catalog
+  recordOffset();
+  addText('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  
+  // Object 2: Pages
+  recordOffset();
+  addText('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  
+  // Object 3: Page (landscape)
+  recordOffset();
+  addText(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>\nendobj\n`);
+  
+  // Object 4: Content stream
+  recordOffset();
+  const contentStream = `q ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`;
+  addText(`4 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}\nendstream\nendobj\n`);
+  
+  // Object 5: Image XObject (JPEG)
+  recordOffset();
+  const imageWidth = width * 3; // Canvas was 3x scaled
+  const imageHeight = height * 3;
+  addText(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imageBytes.length} >>\nstream\n`);
+  pdfParts.push(imageBytes);
+  currentOffset += imageBytes.length;
+  addText('\nendstream\nendobj\n');
+  
+  // Cross-reference table
+  const xrefOffset = currentOffset;
+  addText('xref\n');
+  addText(`0 6\n`);
+  addText('0000000000 65535 f \n');
+  for (let i = 0; i < 5; i++) {
+    addText(`${offsets[i].toString().padStart(10, '0')} 00000 n \n`);
+  }
+  
+  // Trailer
+  addText('trailer\n');
+  addText('<< /Size 6 /Root 1 0 R >>\n');
+  addText('startxref\n');
+  addText(`${xrefOffset}\n`);
+  addText('%%EOF\n');
+  
+  // Combine all parts into a single Uint8Array
+  let totalLength = 0;
+  for (const part of pdfParts) {
+    totalLength += typeof part === 'string' ? part.length : part.length;
+  }
+  
+  const result = new Uint8Array(totalLength);
+  let position = 0;
+  
+  for (const part of pdfParts) {
+    if (typeof part === 'string') {
+      for (let i = 0; i < part.length; i++) {
+        result[position++] = part.charCodeAt(i);
+      }
+    } else {
+      result.set(part, position);
+      position += part.length;
+    }
+  }
+  
+  return result;
+}
+
+// ============================================================================
 // Alternative: PNG Export (fallback for PDF)
 // ============================================================================
 

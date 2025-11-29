@@ -3,13 +3,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeIcon, PencilIcon, CloseIcon, TrashIcon, PointCloudIcon, SettingsIcon } from './Icons';
-import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig } from '../types';
+import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig, FloorPlanLine } from '../types';
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
-import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D, WallDetectionConfig, DEFAULT_WALL_DETECTION_CONFIG, dbscanCluster, fitLineToCluster, mergeCollinearWalls, snapWallsToCorners, WallSegment, splitClustersAtCorners, detectWallsRANSAC, calculateAdaptiveDBSCANParams } from '../lib/floorPlanGenerator';
+import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D } from '../lib/floorPlanGenerator';
 import { generateFloorPlanSVG, downloadSvg } from '../lib/floorPlanSvg';
-import { exportToJSON, exportToDXF, exportToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
+import { exportToJSON, exportToDXF, exportToPDF, exportFloorPlanToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
 import { Rnd } from 'react-rnd';
 
 const EMPTY_ARRAY: string[] = [];
@@ -124,22 +124,37 @@ const Viewer: React.FC<ViewerProps> = ({
   const [previewPoints, setPreviewPoints] = useState<Point2D[]>([]);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Algorithm parameters state
-  const [wallDetectionConfig, setWallDetectionConfig] = useState<WallDetectionConfig>({
-    ...DEFAULT_WALL_DETECTION_CONFIG,
-  });
-  const [dbscanEps, setDbscanEps] = useState(0.008);
-  const [dbscanMinPoints, setDbscanMinPoints] = useState(20);
-  const [snapThreshold, setSnapThreshold] = useState(1.0);
-  const [mergeTolerance, setMergeTolerance] = useState({ angle: 0.1, distance: 0.5 });
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
   const [previewPanelPos, setPreviewPanelPos] = useState({ x: 0, y: 0 });
   const [previewPanelSize, setPreviewPanelSize] = useState({ width: 192, height: 192 });
   const [previewPanelInitialized, setPreviewPanelInitialized] = useState(false);
   const [previewPointSize, setPreviewPointSize] = useState(2);
-  
-  // Preview walls state (for real-time preview)
-  const [previewWalls, setPreviewWalls] = useState<WallSegment[]>([]);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  const previewDragRef = useRef<{ isDragging: boolean; lastPos: { x: number; y: number } }>({ isDragging: false, lastPos: { x: 0, y: 0 } });
+
+  // Floor plan line drawing state
+  const [floorPlanLines, setFloorPlanLines] = useState<FloorPlanLine[]>([]);
+  const [isDrawingLines, setIsDrawingLines] = useState(false);
+  const [lineStartPoint, setLineStartPoint] = useState<Point2D | null>(null);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
+  const [hoveredSnapPoint, setHoveredSnapPoint] = useState<Point2D | null>(null);
+  const [currentMousePos, setCurrentMousePos] = useState<{ x: number; y: number } | null>(null);
+
+  // Drawing rotation state (degrees, 0-360)
+  const [drawingRotation, setDrawingRotation] = useState(0);
+
+  // Measurement text size for PDF export (pixels)
+  const [measurementTextSize, setMeasurementTextSize] = useState(10);
+
+  // Line thickness for PDF export (pixels, min 1)
+  const [lineThickness, setLineThickness] = useState(2);
+
+  // Dimension line scale for PDF export (multiplier)
+  const [dimensionLineScale, setDimensionLineScale] = useState(1);
+
+  // Sheet title for PDF export
+  const [sheetTitle, setSheetTitle] = useState('');
 
   // Helper to calculate distance between two 3D points
   const calculateDistance = (start: ThreeDPoint, end: ThreeDPoint): number => {
@@ -432,7 +447,6 @@ const Viewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     if (!isSliceBoxActive || !sliceBoxConfig || !sceneRef.current) {
       setPreviewPoints([]);
-      setPreviewWalls([]);
       return;
     }
     
@@ -456,45 +470,7 @@ const Viewer: React.FC<ViewerProps> = ({
     return () => clearTimeout(timeoutId);
   }, [isSliceBoxActive, sliceBoxConfig]);
 
-  // Run wall detection when algorithm parameters or preview points change
-  useEffect(() => {
-    if (previewPoints.length === 0) {
-      setPreviewWalls([]);
-      return;
-    }
-    
-    // Debounce for performance
-    const timeoutId = setTimeout(() => {
-      const scaleFactor = originalScaleFactorRef.current;
-      let walls: WallSegment[] = [];
-      
-      if (wallDetectionConfig.useRANSAC) {
-        // Use RANSAC wall detection
-        walls = detectWallsRANSAC(previewPoints, scaleFactor, wallDetectionConfig);
-      } else {
-        // Use DBSCAN clustering
-        const clusters = dbscanCluster(previewPoints, dbscanEps, dbscanMinPoints);
-        const splitClusters = splitClustersAtCorners(clusters);
-        
-        for (const cluster of splitClusters) {
-          const wall = fitLineToCluster(cluster, scaleFactor);
-          if (wall && wall.lengthFeet >= wallDetectionConfig.minWallLengthFeet) {
-            walls.push(wall);
-          }
-        }
-      }
-      
-      // Apply post-processing
-      walls = mergeCollinearWalls(walls, mergeTolerance.angle, mergeTolerance.distance);
-      walls = snapWallsToCorners(walls, scaleFactor, snapThreshold);
-      
-      setPreviewWalls(walls);
-    }, 100); // 100ms debounce for wall detection
-    
-    return () => clearTimeout(timeoutId);
-  }, [previewPoints, wallDetectionConfig, dbscanEps, dbscanMinPoints, snapThreshold, mergeTolerance]);
-
-  // Render slice preview canvas with points and walls
+  // Render slice preview canvas with points
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     if (!canvas) return;
@@ -519,55 +495,159 @@ const Viewer: React.FC<ViewerProps> = ({
     const padding = 20;
     const scaleX = (canvas.width - padding * 2) / (bounds.maxX - bounds.minX || 1);
     const scaleY = (canvas.height - padding * 2) / (bounds.maxY - bounds.minY || 1);
-    const scale = Math.min(scaleX, scaleY);
+    const baseScale = Math.min(scaleX, scaleY);
     
-    // Center the drawing
-    const contentWidth = (bounds.maxX - bounds.minX) * scale;
-    const contentHeight = (bounds.maxY - bounds.minY) * scale;
-    const offsetX = (canvas.width - contentWidth) / 2;
-    const offsetY = (canvas.height - contentHeight) / 2;
+    // Apply zoom to the scale
+    const scale = baseScale * previewZoom;
     
-    // Transform function for coordinates
-    const transform = (p: Point2D) => ({
-      x: offsetX + (p.x - bounds.minX) * scale,
-      y: offsetY + (p.y - bounds.minY) * scale,
-    });
+    // Center the drawing (at zoom=1, pan=0)
+    const contentWidth = (bounds.maxX - bounds.minX) * baseScale;
+    const contentHeight = (bounds.maxY - bounds.minY) * baseScale;
+    const baseOffsetX = (canvas.width - contentWidth) / 2;
+    const baseOffsetY = (canvas.height - contentHeight) / 2;
+    
+    // Apply pan offset
+    const offsetX = baseOffsetX + previewPan.x;
+    const offsetY = baseOffsetY + previewPan.y;
+    
+    // Rotation angle in radians
+    const rotationRad = (drawingRotation * Math.PI) / 180;
+    const canvasCenterX = canvas.width / 2;
+    const canvasCenterY = canvas.height / 2;
+    
+    // Transform function for coordinates with zoom, pan, and rotation
+    const transform = (p: Point2D) => {
+      // First apply scale and offset
+      let x = offsetX + (p.x - bounds.minX) * scale;
+      let y = offsetY + (p.y - bounds.minY) * scale;
+      
+      // Then apply rotation around canvas center
+      if (drawingRotation !== 0) {
+        const dx = x - canvasCenterX;
+        const dy = y - canvasCenterY;
+        x = canvasCenterX + dx * Math.cos(rotationRad) - dy * Math.sin(rotationRad);
+        y = canvasCenterY + dx * Math.sin(rotationRad) + dy * Math.cos(rotationRad);
+      }
+      
+      return { x, y };
+    };
     
     // Draw points with adjustable size and uniform high-contrast color
     ctx.fillStyle = '#00bcd4';
     for (const p of previewPoints) {
       const { x, y } = transform(p);
-      ctx.beginPath();
-      ctx.arc(x, y, previewPointSize, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    
-    // Draw detected walls
-    if (previewWalls.length > 0) {
-      ctx.strokeStyle = '#00bcd4';
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      
-      for (const wall of previewWalls) {
-        const start = transform(wall.start);
-        const end = transform(wall.end);
-        
+      // Only draw points that are within the visible canvas area (with some margin)
+      if (x >= -10 && x <= canvas.width + 10 && y >= -10 && y <= canvas.height + 10) {
         ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
-        
-        // Draw endpoints
-        ctx.fillStyle = '#22d3ee';
-        ctx.beginPath();
-        ctx.arc(start.x, start.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(end.x, end.y, 3, 0, Math.PI * 2);
+        ctx.arc(x, y, previewPointSize, 0, Math.PI * 2);
         ctx.fill();
       }
     }
-  }, [previewPoints, previewWalls, previewPointSize]);
+
+    // Draw existing floor plan lines
+    for (const line of floorPlanLines) {
+      const startScreen = transform(line.start);
+      const endScreen = transform(line.end);
+      
+      // Line stroke
+      const isSelected = line.id === selectedLineId;
+      ctx.strokeStyle = isSelected ? '#fbbf24' : '#00ff88';  // Yellow if selected, green otherwise
+      ctx.lineWidth = isSelected ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(startScreen.x, startScreen.y);
+      ctx.lineTo(endScreen.x, endScreen.y);
+      ctx.stroke();
+      
+      // Endpoint circles
+      ctx.fillStyle = isSelected ? '#fbbf24' : '#00ff88';
+      ctx.beginPath();
+      ctx.arc(startScreen.x, startScreen.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(endScreen.x, endScreen.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Distance label at midpoint
+      const midX = (startScreen.x + endScreen.x) / 2;
+      const midY = (startScreen.y + endScreen.y) / 2;
+      
+      // Format distance as feet and inches
+      const absFeet = Math.abs(line.distanceFeet);
+      const wholeFeet = Math.floor(absFeet);
+      const inches = Math.round((absFeet - wholeFeet) * 12);
+      const distLabel = inches === 12 
+        ? `${wholeFeet + 1}' 0"` 
+        : `${wholeFeet}' ${inches}"`;
+      
+      // Background for label
+      ctx.font = 'bold 11px Arial';
+      const textMetrics = ctx.measureText(distLabel);
+      const labelPadding = 4;
+      const labelWidth = textMetrics.width + labelPadding * 2;
+      const labelHeight = 16;
+      
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.fillRect(
+        midX - labelWidth / 2, 
+        midY - labelHeight / 2, 
+        labelWidth, 
+        labelHeight
+      );
+      
+      // Label text
+      ctx.fillStyle = isSelected ? '#fbbf24' : '#00ff88';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(distLabel, midX, midY);
+    }
+
+    // Draw in-progress line (from start point to mouse position)
+    if (lineStartPoint && currentMousePos) {
+      const startScreen = transform(lineStartPoint);
+      
+      // Use snap point if available, otherwise use mouse position
+      let endScreen: { x: number; y: number };
+      if (hoveredSnapPoint) {
+        endScreen = transform(hoveredSnapPoint);
+      } else {
+        endScreen = { x: currentMousePos.x, y: currentMousePos.y };
+      }
+      
+      // Dashed line for in-progress
+      ctx.strokeStyle = '#ff9800';  // Orange for in-progress
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(startScreen.x, startScreen.y);
+      ctx.lineTo(endScreen.x, endScreen.y);
+      ctx.stroke();
+      ctx.setLineDash([]);  // Reset dash
+      
+      // Start point marker
+      ctx.fillStyle = '#ff9800';
+      ctx.beginPath();
+      ctx.arc(startScreen.x, startScreen.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Draw snap point indicator
+    if (hoveredSnapPoint && isDrawingLines) {
+      const snapScreen = transform(hoveredSnapPoint);
+      
+      // Outer ring
+      ctx.strokeStyle = '#ff9800';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(snapScreen.x, snapScreen.y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      // Inner filled circle
+      ctx.fillStyle = 'rgba(255, 152, 0, 0.5)';
+      ctx.beginPath();
+      ctx.arc(snapScreen.x, snapScreen.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [previewPoints, previewPointSize, previewPanelSize, previewZoom, previewPan, floorPlanLines, selectedLineId, lineStartPoint, currentMousePos, hoveredSnapPoint, isDrawingLines, drawingRotation]);
 
   // Initialize preview panel position when it first becomes visible
   useEffect(() => {
@@ -585,6 +665,9 @@ const Viewer: React.FC<ViewerProps> = ({
       setPreviewPanelInitialized(false);
       setPreviewPanelSize({ width: 192, height: 192 });
       setIsPreviewExpanded(false);
+      // Reset zoom and pan when slice box is deactivated
+      setPreviewZoom(1);
+      setPreviewPan({ x: 0, y: 0 });
     }
   }, [isSliceBoxActive, sliceBoxConfig, previewPanelInitialized]);
 
@@ -609,6 +692,355 @@ const Viewer: React.FC<ViewerProps> = ({
       tempMarkerRef.current = marker;
     }
   };
+
+  // Handle wheel zoom on preview canvas (cursor-centered)
+  const handlePreviewWheel = useCallback((event: React.WheelEvent<HTMLCanvasElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    // Cursor position relative to canvas
+    const cursorX = event.clientX - rect.left;
+    const cursorY = event.clientY - rect.top;
+    
+    // Zoom factor (scroll up = zoom in, scroll down = zoom out)
+    const zoomFactor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.max(0.1, Math.min(50, previewZoom * zoomFactor));
+    
+    // Calculate the position under cursor in "data space" before zoom
+    // Then adjust pan so that same data position stays under cursor after zoom
+    const zoomRatio = newZoom / previewZoom;
+    
+    // New pan offset to keep cursor position fixed
+    const newPanX = cursorX - (cursorX - previewPan.x) * zoomRatio;
+    const newPanY = cursorY - (cursorY - previewPan.y) * zoomRatio;
+    
+    setPreviewZoom(newZoom);
+    setPreviewPan({ x: newPanX, y: newPanY });
+  }, [previewZoom, previewPan]);
+
+  // Get all line endpoints for snap detection
+  const getAllLineEndpoints = useCallback((): Point2D[] => {
+    const endpoints: Point2D[] = [];
+    for (const line of floorPlanLines) {
+      endpoints.push(line.start);
+      endpoints.push(line.end);
+    }
+    return endpoints;
+  }, [floorPlanLines]);
+
+  // Find nearest snap point within radius (in screen pixels)
+  const findNearestSnapPoint = useCallback((
+    canvasX: number, 
+    canvasY: number, 
+    snapRadius: number = 10
+  ): Point2D | null => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || previewPoints.length === 0) return null;
+
+    // Calculate bounds from points (same as in render effect)
+    const bounds = previewPoints.reduce((acc, p) => ({
+      minX: Math.min(acc.minX, p.x),
+      maxX: Math.max(acc.maxX, p.x),
+      minY: Math.min(acc.minY, p.y),
+      maxY: Math.max(acc.maxY, p.y),
+    }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+    const padding = 20;
+    const scaleX = (canvas.width - padding * 2) / (bounds.maxX - bounds.minX || 1);
+    const scaleY = (canvas.height - padding * 2) / (bounds.maxY - bounds.minY || 1);
+    const baseScale = Math.min(scaleX, scaleY);
+    const scale = baseScale * previewZoom;
+
+    const contentWidth = (bounds.maxX - bounds.minX) * baseScale;
+    const contentHeight = (bounds.maxY - bounds.minY) * baseScale;
+    const baseOffsetX = (canvas.width - contentWidth) / 2;
+    const baseOffsetY = (canvas.height - contentHeight) / 2;
+    const offsetX = baseOffsetX + previewPan.x;
+    const offsetY = baseOffsetY + previewPan.y;
+
+    // Transform function from data to screen coordinates
+    const transform = (p: Point2D) => ({
+      x: offsetX + (p.x - bounds.minX) * scale,
+      y: offsetY + (p.y - bounds.minY) * scale,
+    });
+
+    // Check all existing line endpoints
+    const endpoints = getAllLineEndpoints();
+    let nearest: Point2D | null = null;
+    let nearestDist = snapRadius;
+
+    for (const endpoint of endpoints) {
+      const screenPos = transform(endpoint);
+      const dist = Math.sqrt(
+        (screenPos.x - canvasX) ** 2 + (screenPos.y - canvasY) ** 2
+      );
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = endpoint;
+      }
+    }
+
+    return nearest;
+  }, [previewPoints, previewZoom, previewPan, getAllLineEndpoints]);
+
+  // Convert screen coordinates to data coordinates
+  const screenToData = useCallback((canvasX: number, canvasY: number): Point2D | null => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || previewPoints.length === 0) return null;
+
+    // Calculate bounds from points (same as in render effect)
+    const bounds = previewPoints.reduce((acc, p) => ({
+      minX: Math.min(acc.minX, p.x),
+      maxX: Math.max(acc.maxX, p.x),
+      minY: Math.min(acc.minY, p.y),
+      maxY: Math.max(acc.maxY, p.y),
+    }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+    const padding = 20;
+    const scaleX = (canvas.width - padding * 2) / (bounds.maxX - bounds.minX || 1);
+    const scaleY = (canvas.height - padding * 2) / (bounds.maxY - bounds.minY || 1);
+    const baseScale = Math.min(scaleX, scaleY);
+    const scale = baseScale * previewZoom;
+
+    const contentWidth = (bounds.maxX - bounds.minX) * baseScale;
+    const contentHeight = (bounds.maxY - bounds.minY) * baseScale;
+    const baseOffsetX = (canvas.width - contentWidth) / 2;
+    const baseOffsetY = (canvas.height - contentHeight) / 2;
+    const offsetX = baseOffsetX + previewPan.x;
+    const offsetY = baseOffsetY + previewPan.y;
+
+    // Inverse transform: screen to data coordinates
+    return {
+      x: bounds.minX + (canvasX - offsetX) / scale,
+      y: bounds.minY + (canvasY - offsetY) / scale,
+    };
+  }, [previewPoints, previewZoom, previewPan]);
+
+  // Find the nearest line within a selection radius (in screen pixels)
+  const findNearestLine = useCallback((
+    canvasX: number, 
+    canvasY: number, 
+    selectionRadius: number = 5
+  ): string | null => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || previewPoints.length === 0 || floorPlanLines.length === 0) return null;
+
+    // Calculate bounds from points (same as in render effect)
+    const bounds = previewPoints.reduce((acc, p) => ({
+      minX: Math.min(acc.minX, p.x),
+      maxX: Math.max(acc.maxX, p.x),
+      minY: Math.min(acc.minY, p.y),
+      maxY: Math.max(acc.maxY, p.y),
+    }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+
+    const padding = 20;
+    const scaleX = (canvas.width - padding * 2) / (bounds.maxX - bounds.minX || 1);
+    const scaleY = (canvas.height - padding * 2) / (bounds.maxY - bounds.minY || 1);
+    const baseScale = Math.min(scaleX, scaleY);
+    const scale = baseScale * previewZoom;
+
+    const contentWidth = (bounds.maxX - bounds.minX) * baseScale;
+    const contentHeight = (bounds.maxY - bounds.minY) * baseScale;
+    const baseOffsetX = (canvas.width - contentWidth) / 2;
+    const baseOffsetY = (canvas.height - contentHeight) / 2;
+    const offsetX = baseOffsetX + previewPan.x;
+    const offsetY = baseOffsetY + previewPan.y;
+
+    // Transform function from data to screen coordinates
+    const transform = (p: Point2D) => ({
+      x: offsetX + (p.x - bounds.minX) * scale,
+      y: offsetY + (p.y - bounds.minY) * scale,
+    });
+
+    // Calculate distance from point to line segment
+    const distToLineSegment = (
+      px: number, py: number,
+      x1: number, y1: number,
+      x2: number, y2: number
+    ): number => {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const lengthSq = dx * dx + dy * dy;
+      
+      if (lengthSq === 0) {
+        // Line segment is a point
+        return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+      }
+      
+      // Project point onto line, clamped to segment
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSq));
+      const projX = x1 + t * dx;
+      const projY = y1 + t * dy;
+      
+      return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+    };
+
+    let nearestId: string | null = null;
+    let nearestDist = selectionRadius;
+
+    for (const line of floorPlanLines) {
+      const startScreen = transform(line.start);
+      const endScreen = transform(line.end);
+      
+      const dist = distToLineSegment(
+        canvasX, canvasY,
+        startScreen.x, startScreen.y,
+        endScreen.x, endScreen.y
+      );
+      
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestId = line.id;
+      }
+    }
+
+    return nearestId;
+  }, [previewPoints, previewZoom, previewPan, floorPlanLines]);
+
+  // Handle click on preview canvas for line drawing
+  const handlePreviewCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    // Scale mouse coordinates to match canvas internal resolution
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const canvasX = (event.clientX - rect.left) * scaleX;
+    const canvasY = (event.clientY - rect.top) * scaleY;
+
+    if (isDrawingLines) {
+      // Line drawing mode
+      // Check for snap point first
+      const snapPoint = findNearestSnapPoint(canvasX, canvasY);
+      const clickPoint = snapPoint || screenToData(canvasX, canvasY);
+      
+      if (!clickPoint) return;
+
+      if (!lineStartPoint) {
+        // First click - set start point
+        setLineStartPoint(clickPoint);
+      } else {
+        // Second click - complete line
+        const dx = clickPoint.x - lineStartPoint.x;
+        const dy = clickPoint.y - lineStartPoint.y;
+        const distanceViewUnits = Math.sqrt(dx * dx + dy * dy);
+        const distanceFeet = distanceViewUnits / originalScaleFactorRef.current;
+
+        const newLine: FloorPlanLine = {
+          id: Math.random().toString(36).substring(2, 10),
+          start: lineStartPoint,
+          end: clickPoint,
+          distanceFeet,
+        };
+
+        setFloorPlanLines(prev => [...prev, newLine]);
+        setLineStartPoint(null);
+        setHoveredSnapPoint(null);
+      }
+    } else {
+      // Selection mode - check if clicking near a line
+      const nearestLineId = findNearestLine(canvasX, canvasY);
+      if (nearestLineId) {
+        setSelectedLineId(nearestLineId);
+      } else {
+        // Clicked empty space - deselect
+        setSelectedLineId(null);
+      }
+    }
+  }, [isDrawingLines, lineStartPoint, findNearestSnapPoint, screenToData, findNearestLine]);
+
+  // Handle drag-to-pan on preview canvas
+  const handlePreviewMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    // Right click (button 2) or middle click (button 1) to pan - works in all modes
+    if (event.button === 2 || event.button === 1) {
+      event.preventDefault();
+      previewDragRef.current = {
+        isDragging: true,
+        lastPos: { x: event.clientX, y: event.clientY }
+      };
+      return;
+    }
+    
+    // In draw mode, left click is for drawing, not panning
+    if (isDrawingLines && event.button === 0) {
+      // Don't start dragging, let click handler deal with it
+      return;
+    }
+    
+    // Left click to pan (only when not in draw mode)
+    if (event.button === 0) {
+      event.preventDefault();
+      previewDragRef.current = {
+        isDragging: true,
+        lastPos: { x: event.clientX, y: event.clientY }
+      };
+    }
+  }, [isDrawingLines]);
+
+  const handlePreviewMouseMove = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    // Scale mouse coordinates to match canvas internal resolution
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const canvasX = (event.clientX - rect.left) * scaleX;
+    const canvasY = (event.clientY - rect.top) * scaleY;
+
+    // Update current mouse position for in-progress line preview
+    if (isDrawingLines) {
+      setCurrentMousePos({ x: canvasX, y: canvasY });
+      
+      // Check for snap points
+      const snapPoint = findNearestSnapPoint(canvasX, canvasY);
+      setHoveredSnapPoint(snapPoint);
+    }
+
+    // Handle panning
+    if (!previewDragRef.current.isDragging) return;
+    
+    const deltaX = event.clientX - previewDragRef.current.lastPos.x;
+    const deltaY = event.clientY - previewDragRef.current.lastPos.y;
+    
+    previewDragRef.current.lastPos = { x: event.clientX, y: event.clientY };
+    
+    // Apply inverse rotation to the delta so panning feels natural relative to rotated content
+    const rotationRad = (-drawingRotation * Math.PI) / 180;
+    const cos = Math.cos(rotationRad);
+    const sin = Math.sin(rotationRad);
+    const rotatedDeltaX = deltaX * cos - deltaY * sin;
+    const rotatedDeltaY = deltaX * sin + deltaY * cos;
+    
+    setPreviewPan(prev => ({
+      x: prev.x + rotatedDeltaX,
+      y: prev.y + rotatedDeltaY
+    }));
+  }, [isDrawingLines, findNearestSnapPoint, drawingRotation]);
+
+  const handlePreviewMouseUp = useCallback(() => {
+    previewDragRef.current.isDragging = false;
+  }, []);
+
+  const handlePreviewMouseLeave = useCallback(() => {
+    previewDragRef.current.isDragging = false;
+    // Clear snap point and mouse position when leaving canvas
+    if (isDrawingLines) {
+      setHoveredSnapPoint(null);
+      setCurrentMousePos(null);
+    }
+  }, [isDrawingLines]);
+
+  // Reset preview zoom and pan
+  const resetPreviewZoom = useCallback(() => {
+    setPreviewZoom(1);
+    setPreviewPan({ x: 0, y: 0 });
+  }, []);
 
   // Handle slice box handle dragging
   const handleSliceBoxMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -1815,8 +2247,6 @@ const Viewer: React.FC<ViewerProps> = ({
                 size={previewPanelSize}
                 minWidth={192}
                 minHeight={192}
-                maxWidth={800}
-                maxHeight={700}
                 bounds="parent"
                 dragHandleClassName="preview-drag-handle"
                 enableResizing={{
@@ -1846,8 +2276,108 @@ const Viewer: React.FC<ViewerProps> = ({
                     Top-Down Preview
                   </span>
 
-                  <button
-                    onClick={() => {
+                  <div className="flex items-center gap-1">
+                    {/* Draw Lines Toggle Button */}
+                    <button
+                      onClick={() => {
+                        setIsDrawingLines(!isDrawingLines);
+                        if (isDrawingLines) {
+                          // Exiting draw mode - clear in-progress line
+                          setLineStartPoint(null);
+                          setHoveredSnapPoint(null);
+                          setCurrentMousePos(null);
+                        }
+                        // Clear selection when toggling draw mode
+                        setSelectedLineId(null);
+                      }}
+                      className={`p-1 rounded transition-colors ${
+                        isDrawingLines 
+                          ? 'bg-cyan-600 hover:bg-cyan-700' 
+                          : 'hover:bg-gray-700'
+                      }`}
+                      title={isDrawingLines ? 'Exit Draw Mode' : 'Draw Lines'}
+                    >
+                      <svg 
+                        className={`h-4 w-4 ${isDrawingLines ? 'text-white' : 'text-gray-400'}`}
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                    {/* Delete Selected Line Button - only show when line is selected */}
+                    {selectedLineId && (
+                      <button
+                        onClick={() => {
+                          setFloorPlanLines(prev => prev.filter(l => l.id !== selectedLineId));
+                          setSelectedLineId(null);
+                        }}
+                        className="p-1 hover:bg-red-600 rounded transition-colors"
+                        title="Delete Selected Line"
+                      >
+                        <svg 
+                          className="h-4 w-4 text-red-400 hover:text-white"
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="2"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                    {/* Export PDF Button - only show when there are lines */}
+                    {floorPlanLines.length > 0 && (
+                      <button
+                        onClick={() => {
+                          const filename = `floor_plan_${new Date().toISOString().split('T')[0]}.pdf`;
+                          exportFloorPlanToPDF(
+                            floorPlanLines,
+                            drawingRotation,
+                            originalScaleFactorRef.current,
+                            filename,
+                            measurementTextSize,
+                            sheetTitle,
+                            lineThickness,
+                            dimensionLineScale
+                          );
+                        }}
+                        className="p-1 hover:bg-green-600 rounded transition-colors"
+                        title="Export as PDF"
+                      >
+                        <svg 
+                          className="h-4 w-4 text-green-400 hover:text-white"
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="2"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </button>
+                    )}
+                    {/* Reset Zoom Button - only show when zoomed */}
+                    {(previewZoom !== 1 || previewPan.x !== 0 || previewPan.y !== 0) && (
+                      <button
+                        onClick={resetPreviewZoom}
+                        className="p-1 hover:bg-gray-700 rounded transition-colors"
+                        title="Reset zoom (1x)"
+                      >
+                        <svg 
+                          className="h-4 w-4 text-cyan-400" 
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="2"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
                       const newExpanded = !isPreviewExpanded;
                       setIsPreviewExpanded(newExpanded);
                       if (newExpanded) {
@@ -1887,6 +2417,7 @@ const Viewer: React.FC<ViewerProps> = ({
                       )}
                     </svg>
                   </button>
+                  </div>
                 </div>
                 
                 {/* Canvas Container */}
@@ -1898,46 +2429,131 @@ const Viewer: React.FC<ViewerProps> = ({
                         ref={previewCanvasRef} 
                         width={Math.max(100, previewPanelSize.width - 16)} 
                         height={Math.max(100, previewPanelSize.height - 80)} 
-                        className="w-full h-full"
+                        className={`w-full h-full ${isDrawingLines ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
+                        onWheel={handlePreviewWheel}
+                        onClick={handlePreviewCanvasClick}
+                        onMouseDown={handlePreviewMouseDown}
+                        onMouseMove={handlePreviewMouseMove}
+                        onMouseUp={handlePreviewMouseUp}
+                        onMouseLeave={handlePreviewMouseLeave}
+                        onContextMenu={(e) => e.preventDefault()}
                       />
-                      {/* Point/Wall count overlay */}
+                      {/* Zoom level, point count, and line count overlay */}
                       <div className="absolute bottom-2 left-2 text-xs text-gray-500 font-mono pointer-events-none">
-                        {previewPoints.length.toLocaleString()} pts | {previewWalls.length} walls
+                        {previewZoom !== 1 && <span className="text-cyan-400">{previewZoom.toFixed(1)}x · </span>}
+                        {previewPoints.length.toLocaleString()} pts
+                        {floorPlanLines.length > 0 && <span className="text-green-400"> · {floorPlanLines.length} lines</span>}
                       </div>
                     </div>
                     
-                    {/* Bottom controls - Thickness and Point Size */}
-                    <div className="flex items-center gap-4 p-2 bg-gray-800/50 border-t border-gray-700/50">
-                      {/* Thickness control */}
-                      <div className="flex items-center gap-2 flex-1">
-                        <label className="text-gray-400 text-xs whitespace-nowrap">Thickness:</label>
+                    {/* Bottom controls - Thickness, Point Size, and Rotation */}
+                    <div className="flex flex-col gap-2 p-2 bg-gray-800/50 border-t border-gray-700/50">
+                      <div className="flex items-center gap-4">
+                        {/* Thickness control */}
+                        <div className="flex items-center gap-2 flex-1">
+                          <label className="text-gray-400 text-xs whitespace-nowrap">Thickness:</label>
+                          <input
+                            type="range"
+                            min="2"
+                            max="24"
+                            step="1"
+                            value={sliceBoxConfig.thicknessInches}
+                            onChange={(e) => {
+                              const thickness = parseInt(e.target.value);
+                              setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
+                            }}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          />
+                          <span className="text-cyan-400 text-xs font-mono w-6 text-right">{sliceBoxConfig.thicknessInches}"</span>
+                        </div>
+                        {/* Point Size control */}
+                        <div className="flex items-center gap-2 flex-1">
+                          <label className="text-gray-400 text-xs whitespace-nowrap">Point Size:</label>
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="5"
+                            step="0.5"
+                            value={previewPointSize}
+                            onChange={(e) => setPreviewPointSize(parseFloat(e.target.value))}
+                            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          />
+                          <span className="text-cyan-400 text-xs font-mono w-10 text-right">{previewPointSize.toFixed(1)} px</span>
+                        </div>
+                      </div>
+                      {/* Rotation control */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Rotation:</label>
                         <input
                           type="range"
-                          min="2"
+                          min="0"
+                          max="360"
+                          step="1"
+                          value={drawingRotation}
+                          onChange={(e) => setDrawingRotation(parseInt(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <span className="text-cyan-400 text-xs font-mono w-8 text-right">{drawingRotation}°</span>
+                        <button
+                          onClick={() => setDrawingRotation(0)}
+                          className="px-2 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+                          title="Reset rotation"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      {/* Text Size control */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Text Size:</label>
+                        <input
+                          type="range"
+                          min="1"
                           max="24"
                           step="1"
-                          value={sliceBoxConfig.thicknessInches}
-                          onChange={(e) => {
-                            const thickness = parseInt(e.target.value);
-                            setSliceBoxConfig(prev => prev ? { ...prev, thicknessInches: thickness } : null);
-                          }}
-                          className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          value={measurementTextSize}
+                          onChange={(e) => setMeasurementTextSize(parseInt(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                         />
-                        <span className="text-cyan-400 text-xs font-mono w-6 text-right">{sliceBoxConfig.thicknessInches}"</span>
+                        <span className="text-cyan-400 text-xs font-mono w-8 text-right">{measurementTextSize}px</span>
                       </div>
-                      {/* Point Size control */}
-                      <div className="flex items-center gap-2 flex-1">
-                        <label className="text-gray-400 text-xs whitespace-nowrap">Point Size:</label>
+                      {/* Line Thickness control */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Line Thickness:</label>
+                        <input
+                          type="range"
+                          min="1"
+                          max="10"
+                          step="1"
+                          value={lineThickness}
+                          onChange={(e) => setLineThickness(parseInt(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <span className="text-cyan-400 text-xs font-mono w-8 text-right">{lineThickness}px</span>
+                      </div>
+                      {/* Dimension Lines control */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Dimension Lines:</label>
                         <input
                           type="range"
                           min="0.5"
-                          max="5"
-                          step="0.5"
-                          value={previewPointSize}
-                          onChange={(e) => setPreviewPointSize(parseFloat(e.target.value))}
-                          className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                          max="3"
+                          step="0.1"
+                          value={dimensionLineScale}
+                          onChange={(e) => setDimensionLineScale(parseFloat(e.target.value))}
+                          className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                         />
-                        <span className="text-cyan-400 text-xs font-mono w-10 text-right">{previewPointSize.toFixed(1)} px</span>
+                        <span className="text-cyan-400 text-xs font-mono w-8 text-right">{dimensionLineScale}x</span>
+                      </div>
+                      {/* Sheet Title control */}
+                      <div className="flex items-center gap-2">
+                        <label className="text-gray-400 text-xs whitespace-nowrap">Sheet Title:</label>
+                        <input
+                          type="text"
+                          value={sheetTitle}
+                          onChange={(e) => setSheetTitle(e.target.value)}
+                          placeholder="Enter title for PDF"
+                          className="flex-1 px-2 py-0.5 text-xs bg-gray-700 text-white rounded border border-gray-600 focus:border-cyan-500 focus:outline-none"
+                        />
                       </div>
                     </div>
                   </div>

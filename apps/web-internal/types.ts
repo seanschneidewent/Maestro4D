@@ -59,6 +59,14 @@ export interface SliceBoxConfig {
   thicknessInches: number;
 }
 
+// Floor plan line for dimensional drawings
+export interface FloorPlanLine {
+  id: string;
+  start: { x: number; y: number };  // View units (same as previewPoints)
+  end: { x: number; y: number };
+  distanceFeet: number;
+}
+
 export interface ScanData {
   date: string;
   modelUrl?: string;
