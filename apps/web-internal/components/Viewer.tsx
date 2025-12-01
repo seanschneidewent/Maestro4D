@@ -7,7 +7,7 @@ import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig, FloorPlanLine } from '..
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
-import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D } from '../lib/floorPlanGenerator';
+import { generateFloorPlan, FloorPlanData, extractPointsFromGLB, sliceAndProject, Point2D, SliceMode } from '../lib/floorPlanGenerator';
 import { generateFloorPlanSVG, downloadSvg } from '../lib/floorPlanSvg';
 import { exportToJSON, exportToDXF, exportToPDF, exportFloorPlanToPDF, calculateFloorPlanStats } from '../lib/floorPlanExport';
 import { Rnd } from 'react-rnd';
@@ -80,6 +80,7 @@ const Viewer: React.FC<ViewerProps> = ({
   
   // Slice box state for floor plan generation
   const [isSliceBoxActive, setIsSliceBoxActive] = useState(false);
+  const [isSliceBoxHidden, setIsSliceBoxHidden] = useState(false);
   const [sliceBoxConfig, setSliceBoxConfig] = useState<SliceBoxConfig | null>(null);
   const sliceBoxGroupRef = useRef<THREE.Group | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<{ type: 'corner' | 'edge'; index: number } | null>(null);
@@ -88,6 +89,9 @@ const Viewer: React.FC<ViewerProps> = ({
   
   // Slice box XZ movement state (WASD keys when selected)
   const [isSliceSelectedForMove, setIsSliceSelectedForMove] = useState(false);
+  
+  // Slice mode: horizontal (floor plan) or vertical (elevation)
+  const [sliceMode, setSliceMode] = useState<'horizontal' | 'vertical'>('horizontal');
   
   // Editing state
   const [isEditing, setIsEditing] = useState(false);
@@ -435,15 +439,15 @@ const Viewer: React.FC<ViewerProps> = ({
       sliceBoxGroupRef.current = null;
     }
     
-    // Create new slice box if active
-    if (isSliceBoxActive && sliceBoxConfig) {
+    // Create new slice box if active and not hidden
+    if (isSliceBoxActive && sliceBoxConfig && !isSliceBoxHidden) {
       const sliceBoxGroup = createSliceBox(sliceBoxConfig, isSliceSelectedForMove);
       sceneRef.current.add(sliceBoxGroup);
       sliceBoxGroupRef.current = sliceBoxGroup;
     }
-  }, [isSliceBoxActive, sliceBoxConfig, createSliceBox, isSliceSelectedForMove]);
+  }, [isSliceBoxActive, isSliceBoxHidden, sliceBoxConfig, createSliceBox, isSliceSelectedForMove]);
 
-  // Update slice preview when slice config changes
+  // Update slice preview when slice config or mode changes
   useEffect(() => {
     if (!isSliceBoxActive || !sliceBoxConfig || !sceneRef.current) {
       setPreviewPoints([]);
@@ -455,7 +459,7 @@ const Viewer: React.FC<ViewerProps> = ({
       if (!sceneRef.current) return;
       
       const points3D = extractPointsFromGLB(sceneRef.current);
-      const points2D = sliceAndProject(points3D, sliceBoxConfig, originalScaleFactorRef.current);
+      const points2D = sliceAndProject(points3D, sliceBoxConfig, originalScaleFactorRef.current, sliceMode);
       
       // Sample if too many points (for performance)
       const maxPoints = 10000;
@@ -468,7 +472,7 @@ const Viewer: React.FC<ViewerProps> = ({
     }, 50); // 50ms debounce
     
     return () => clearTimeout(timeoutId);
-  }, [isSliceBoxActive, sliceBoxConfig]);
+  }, [isSliceBoxActive, sliceBoxConfig, sliceMode]);
 
   // Render slice preview canvas with points
   useEffect(() => {
@@ -519,7 +523,10 @@ const Viewer: React.FC<ViewerProps> = ({
     const transform = (p: Point2D) => {
       // First apply scale and offset
       let x = offsetX + (p.x - bounds.minX) * scale;
-      let y = offsetY + (p.y - bounds.minY) * scale;
+      // For vertical mode, invert Y so higher elevations appear at top of canvas
+      let y = sliceMode === 'vertical'
+        ? offsetY + (bounds.maxY - p.y) * scale  // Inverted: high elevation at top
+        : offsetY + (p.y - bounds.minY) * scale; // Normal: floor plan view
       
       // Then apply rotation around canvas center
       if (drawingRotation !== 0) {
@@ -647,7 +654,7 @@ const Viewer: React.FC<ViewerProps> = ({
       ctx.arc(snapScreen.x, snapScreen.y, 5, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [previewPoints, previewPointSize, previewPanelSize, previewZoom, previewPan, floorPlanLines, selectedLineId, lineStartPoint, currentMousePos, hoveredSnapPoint, isDrawingLines, drawingRotation]);
+  }, [previewPoints, previewPointSize, previewPanelSize, previewZoom, previewPan, floorPlanLines, selectedLineId, lineStartPoint, currentMousePos, hoveredSnapPoint, isDrawingLines, drawingRotation, sliceMode]);
 
   // Initialize preview panel position when it first becomes visible
   useEffect(() => {
@@ -668,6 +675,8 @@ const Viewer: React.FC<ViewerProps> = ({
       // Reset zoom and pan when slice box is deactivated
       setPreviewZoom(1);
       setPreviewPan({ x: 0, y: 0 });
+      // Reset hidden state when fully deactivated
+      setIsSliceBoxHidden(false);
     }
   }, [isSliceBoxActive, sliceBoxConfig, previewPanelInitialized]);
 
@@ -762,11 +771,29 @@ const Viewer: React.FC<ViewerProps> = ({
     const offsetX = baseOffsetX + previewPan.x;
     const offsetY = baseOffsetY + previewPan.y;
 
-    // Transform function from data to screen coordinates
-    const transform = (p: Point2D) => ({
-      x: offsetX + (p.x - bounds.minX) * scale,
-      y: offsetY + (p.y - bounds.minY) * scale,
-    });
+    // Rotation parameters
+    const rotationRad = (drawingRotation * Math.PI) / 180;
+    const canvasCenterX = canvas.width / 2;
+    const canvasCenterY = canvas.height / 2;
+
+    // Transform function from data to screen coordinates (with rotation)
+    // For vertical mode, Y is inverted (high elevation at top of canvas)
+    const transform = (p: Point2D) => {
+      let x = offsetX + (p.x - bounds.minX) * scale;
+      let y = sliceMode === 'vertical'
+        ? offsetY + (bounds.maxY - p.y) * scale  // Inverted for vertical mode
+        : offsetY + (p.y - bounds.minY) * scale; // Normal for horizontal mode
+      
+      // Apply rotation around canvas center
+      if (drawingRotation !== 0) {
+        const dx = x - canvasCenterX;
+        const dy = y - canvasCenterY;
+        x = canvasCenterX + dx * Math.cos(rotationRad) - dy * Math.sin(rotationRad);
+        y = canvasCenterY + dx * Math.sin(rotationRad) + dy * Math.cos(rotationRad);
+      }
+      
+      return { x, y };
+    };
 
     // Check all existing line endpoints
     const endpoints = getAllLineEndpoints();
@@ -785,7 +812,7 @@ const Viewer: React.FC<ViewerProps> = ({
     }
 
     return nearest;
-  }, [previewPoints, previewZoom, previewPan, getAllLineEndpoints]);
+  }, [previewPoints, previewZoom, previewPan, getAllLineEndpoints, sliceMode, drawingRotation]);
 
   // Convert screen coordinates to data coordinates
   const screenToData = useCallback((canvasX: number, canvasY: number): Point2D | null => {
@@ -813,12 +840,28 @@ const Viewer: React.FC<ViewerProps> = ({
     const offsetX = baseOffsetX + previewPan.x;
     const offsetY = baseOffsetY + previewPan.y;
 
+    // Apply inverse rotation first (if rotated)
+    let unrotatedX = canvasX;
+    let unrotatedY = canvasY;
+    if (drawingRotation !== 0) {
+      const canvasCenterX = canvas.width / 2;
+      const canvasCenterY = canvas.height / 2;
+      const rotationRad = (-drawingRotation * Math.PI) / 180; // Negative for inverse
+      const dx = canvasX - canvasCenterX;
+      const dy = canvasY - canvasCenterY;
+      unrotatedX = canvasCenterX + dx * Math.cos(rotationRad) - dy * Math.sin(rotationRad);
+      unrotatedY = canvasCenterY + dx * Math.sin(rotationRad) + dy * Math.cos(rotationRad);
+    }
+
     // Inverse transform: screen to data coordinates
+    // For vertical mode, Y is inverted (high elevation at top of canvas)
     return {
-      x: bounds.minX + (canvasX - offsetX) / scale,
-      y: bounds.minY + (canvasY - offsetY) / scale,
+      x: bounds.minX + (unrotatedX - offsetX) / scale,
+      y: sliceMode === 'vertical'
+        ? bounds.maxY - (unrotatedY - offsetY) / scale  // Inverted for vertical mode
+        : bounds.minY + (unrotatedY - offsetY) / scale, // Normal for horizontal mode
     };
-  }, [previewPoints, previewZoom, previewPan]);
+  }, [previewPoints, previewZoom, previewPan, sliceMode, drawingRotation]);
 
   // Find the nearest line within a selection radius (in screen pixels)
   const findNearestLine = useCallback((
@@ -850,11 +893,29 @@ const Viewer: React.FC<ViewerProps> = ({
     const offsetX = baseOffsetX + previewPan.x;
     const offsetY = baseOffsetY + previewPan.y;
 
-    // Transform function from data to screen coordinates
-    const transform = (p: Point2D) => ({
-      x: offsetX + (p.x - bounds.minX) * scale,
-      y: offsetY + (p.y - bounds.minY) * scale,
-    });
+    // Rotation parameters
+    const rotationRad = (drawingRotation * Math.PI) / 180;
+    const canvasCenterX = canvas.width / 2;
+    const canvasCenterY = canvas.height / 2;
+
+    // Transform function from data to screen coordinates (with rotation)
+    // For vertical mode, Y is inverted (high elevation at top of canvas)
+    const transform = (p: Point2D) => {
+      let x = offsetX + (p.x - bounds.minX) * scale;
+      let y = sliceMode === 'vertical'
+        ? offsetY + (bounds.maxY - p.y) * scale  // Inverted for vertical mode
+        : offsetY + (p.y - bounds.minY) * scale; // Normal for horizontal mode
+      
+      // Apply rotation around canvas center
+      if (drawingRotation !== 0) {
+        const dx = x - canvasCenterX;
+        const dy = y - canvasCenterY;
+        x = canvasCenterX + dx * Math.cos(rotationRad) - dy * Math.sin(rotationRad);
+        y = canvasCenterY + dx * Math.sin(rotationRad) + dy * Math.cos(rotationRad);
+      }
+      
+      return { x, y };
+    };
 
     // Calculate distance from point to line segment
     const distToLineSegment = (
@@ -899,7 +960,7 @@ const Viewer: React.FC<ViewerProps> = ({
     }
 
     return nearestId;
-  }, [previewPoints, previewZoom, previewPan, floorPlanLines]);
+  }, [previewPoints, previewZoom, previewPan, floorPlanLines, sliceMode, drawingRotation]);
 
   // Handle click on preview canvas for line drawing
   const handlePreviewCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1663,7 +1724,7 @@ const Viewer: React.FC<ViewerProps> = ({
         if (isSliceSelectedForMove && sliceBoxConfig && ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) {
             e.preventDefault();
             
-            const xzStep = 0.05; // Same step size as vertical movement
+            const xzStep = 0.005; // Same step size as vertical movement
             
             setSliceBoxConfig(prev => {
                 if (!prev) return null;
@@ -1688,8 +1749,8 @@ const Viewer: React.FC<ViewerProps> = ({
         if (isSliceBoxActive && sliceBoxConfig && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
             e.preventDefault();
             
-            const verticalStep = 0.05; // ~0.6 inches in scaled units
-            const rotationStep = Math.PI / 36; // 5 degrees
+            const verticalStep = 0.005; // ~0.6 inches in scaled units
+            const rotationStep = Math.PI / 100; // 1 degree
             
             setSliceBoxConfig(prev => {
                 if (!prev) return null;
@@ -1966,11 +2027,19 @@ const Viewer: React.FC<ViewerProps> = ({
   const handleGenerateFloorPlan = () => {
     console.log('[Floor Plan] Activating slice box tool');
     
-    // If already active, toggle off
+    // If hidden, just re-show
+    if (isSliceBoxActive && isSliceBoxHidden) {
+      setIsSliceBoxHidden(false);
+      return;
+    }
+    
+    // If already active and visible, toggle off
     if (isSliceBoxActive) {
       setIsSliceBoxActive(false);
       setSliceBoxConfig(null);
       setIsSliceSelectedForMove(false);
+      setIsSliceBoxHidden(false);
+      setSliceMode('horizontal'); // Reset to horizontal mode
       return;
     }
     
@@ -2240,7 +2309,7 @@ const Viewer: React.FC<ViewerProps> = ({
             )}
 
             {/* Slice Preview Panel - Draggable & Resizable */}
-            {isSliceBoxActive && sliceBoxConfig && (
+            {isSliceBoxActive && sliceBoxConfig && !isSliceBoxHidden && (
               <Rnd
                 className="bg-gray-900/95 backdrop-blur-sm border border-gray-700/50 rounded-lg overflow-hidden pointer-events-auto shadow-xl"
                 position={previewPanelPos}
@@ -2273,10 +2342,56 @@ const Viewer: React.FC<ViewerProps> = ({
                 {/* Header - Drag Handle */}
                 <div className="preview-drag-handle absolute top-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gray-800/80 border-b border-gray-700/50 z-20 cursor-move select-none">
                   <span className="text-xs text-gray-400 font-medium">
-                    Top-Down Preview
+                    {sliceMode === 'vertical' ? 'Elevation Preview' : 'Top-Down Preview'}
                   </span>
 
                   <div className="flex items-center gap-1">
+                    {/* Slice Mode Toggle Button */}
+                    <button
+                      onClick={() => {
+                        const newMode = sliceMode === 'horizontal' ? 'vertical' : 'horizontal';
+                        setSliceMode(newMode);
+                        // Clear drawn lines when switching modes
+                        setFloorPlanLines([]);
+                        setLineStartPoint(null);
+                        setSelectedLineId(null);
+                        // Reset zoom/pan
+                        setPreviewZoom(1);
+                        setPreviewPan({ x: 0, y: 0 });
+                        // Rotate slice box for vertical mode
+                        if (sliceBoxConfig) {
+                          setSliceBoxConfig({
+                            ...sliceBoxConfig,
+                            rotation: {
+                              ...sliceBoxConfig.rotation,
+                              x: newMode === 'vertical' ? Math.PI / 2 : 0
+                            }
+                          });
+                        }
+                      }}
+                      className={`p-1 rounded transition-colors ${
+                        sliceMode === 'vertical'
+                          ? 'bg-purple-600 hover:bg-purple-700'
+                          : 'hover:bg-gray-700'
+                      }`}
+                      title={sliceMode === 'vertical' ? 'Switch to Floor Plan View' : 'Switch to Elevation View'}
+                    >
+                      <svg 
+                        className={`h-4 w-4 ${sliceMode === 'vertical' ? 'text-white' : 'text-gray-400'}`}
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2"
+                      >
+                        {sliceMode === 'vertical' ? (
+                          // Vertical slice icon (rectangle on edge)
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 3h6v18H9V3z" />
+                        ) : (
+                          // Horizontal slice icon (rectangle flat)
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9h18v6H3V9z" />
+                        )}
+                      </svg>
+                    </button>
                     {/* Draw Lines Toggle Button */}
                     <button
                       onClick={() => {
@@ -2332,7 +2447,8 @@ const Viewer: React.FC<ViewerProps> = ({
                     {floorPlanLines.length > 0 && (
                       <button
                         onClick={() => {
-                          const filename = `floor_plan_${new Date().toISOString().split('T')[0]}.pdf`;
+                          const prefix = sliceMode === 'vertical' ? 'elevation' : 'floor_plan';
+                          const filename = `${prefix}_${new Date().toISOString().split('T')[0]}.pdf`;
                           exportFloorPlanToPDF(
                             floorPlanLines,
                             drawingRotation,
@@ -2415,6 +2531,15 @@ const Viewer: React.FC<ViewerProps> = ({
                       ) : (
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
                       )}
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setIsSliceBoxHidden(true)}
+                    className="p-1 hover:bg-red-600 rounded transition-colors"
+                    title="Close Preview"
+                  >
+                    <svg className="h-4 w-4 text-gray-400 hover:text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
                   </div>

@@ -139,17 +139,27 @@ export function extractPointsFromGLB(scene: THREE.Scene): THREE.Vector3[] {
 }
 
 // ============================================================================
+// Slice Mode Type
+// ============================================================================
+
+export type SliceMode = 'horizontal' | 'vertical';
+
+// ============================================================================
 // Slice and Project
 // ============================================================================
 
 /**
- * Filter points within slice box bounds and project to 2D (X,Z plane)
- * Y is vertical (height), X and Z are the floor plane
+ * Filter points within slice box bounds and project to 2D
+ * @param points - 3D points to slice and project
+ * @param sliceConfig - Slice box configuration
+ * @param scaleFactor - Scale factor for unit conversion
+ * @param mode - 'horizontal' for floor plans (X-Z projection), 'vertical' for elevations (X-Y projection)
  */
 export function sliceAndProject(
   points: THREE.Vector3[],
   sliceConfig: SliceBoxConfig,
-  scaleFactor: number
+  scaleFactor: number,
+  mode: SliceMode = 'horizontal'
 ): Point2D[] {
   const result: Point2D[] = [];
   
@@ -174,26 +184,36 @@ export function sliceAndProject(
     localPoint.applyMatrix4(inverseRotation);
     
     // Check if point is within slice box bounds
-    // X and Z extents define the horizontal bounds
-    // Y (height) is determined by slice thickness
+    // For horizontal mode: X and Z are horizontal bounds, Y is thickness
+    // For vertical mode: X and Y are vertical bounds, Z is thickness
     const inX = Math.abs(localPoint.x) <= halfExtents.x;
     const inZ = Math.abs(localPoint.z) <= halfExtents.z;
     const inY = Math.abs(localPoint.y) <= halfThickness;
     
     if (inX && inZ && inY) {
-      // Project to 2D: use X and Z as the floor plane
       // Rotate back to world space for consistent output
       const worldPoint = localPoint.clone();
       worldPoint.applyMatrix4(rotationMatrix);
       
-      result.push({
-        x: worldPoint.x,
-        y: worldPoint.z  // Z becomes Y in 2D floor plan
-      });
+      if (mode === 'vertical') {
+        // Vertical mode: project to X-Y plane (elevation view)
+        // X stays as X, Y (height) becomes the 2D Y coordinate
+        result.push({
+          x: worldPoint.x,
+          y: worldPoint.y  // Y (height) becomes 2D Y for elevation
+        });
+      } else {
+        // Horizontal mode: project to X-Z plane (floor plan view)
+        result.push({
+          x: worldPoint.x,
+          y: worldPoint.z  // Z becomes Y in 2D floor plan
+        });
+      }
     }
   }
   
-  console.log(`[Floor Plan] Sliced ${result.length} points from ${points.length} total (${((result.length / points.length) * 100).toFixed(1)}%)`);
+  const modeLabel = mode === 'vertical' ? 'Elevation' : 'Floor Plan';
+  console.log(`[${modeLabel}] Sliced ${result.length} points from ${points.length} total (${((result.length / points.length) * 100).toFixed(1)}%)`);
   return result;
 }
 
