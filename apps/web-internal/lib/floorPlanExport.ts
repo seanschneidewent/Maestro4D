@@ -440,10 +440,17 @@ export interface FloorPlanLineData {
   distanceFeet: number;
 }
 
+export interface FloorPlanTextLabelData {
+  id: string;
+  position: { x: number; y: number };
+  text: string;
+}
+
 /**
  * Export floor plan lines as a landscape PDF with architectural dimension lines
  * 
  * @param lines - Array of floor plan lines to export
+ * @param textLabels - Array of text labels to export
  * @param rotationDegrees - Rotation angle in degrees (0-360)
  * @param scaleFactor - Scale factor for converting view units to feet
  * @param filename - Output filename
@@ -454,6 +461,7 @@ export interface FloorPlanLineData {
  */
 export async function exportFloorPlanToPDF(
   lines: FloorPlanLineData[],
+  textLabels: FloorPlanTextLabelData[],
   rotationDegrees: number,
   scaleFactor: number,
   filename: string,
@@ -462,8 +470,8 @@ export async function exportFloorPlanToPDF(
   lineThickness: number = 2,
   dimensionLineScale: number = 1
 ): Promise<void> {
-  if (lines.length === 0) {
-    console.warn('[Floor Plan] No lines to export');
+  if (lines.length === 0 && textLabels.length === 0) {
+    console.warn('[Floor Plan] No lines or text labels to export');
     return;
   }
 
@@ -472,7 +480,7 @@ export async function exportFloorPlanToPDF(
   const pageHeight = 612;
   const margin = 54; // 0.75 inch margins
   
-  // Calculate bounds from all line endpoints
+  // Calculate bounds from all line endpoints and text label positions
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   
@@ -481,6 +489,13 @@ export async function exportFloorPlanToPDF(
     maxX = Math.max(maxX, line.start.x, line.end.x);
     minY = Math.min(minY, line.start.y, line.end.y);
     maxY = Math.max(maxY, line.start.y, line.end.y);
+  }
+  
+  for (const label of textLabels) {
+    minX = Math.min(minX, label.position.x);
+    maxX = Math.max(maxX, label.position.x);
+    minY = Math.min(minY, label.position.y);
+    maxY = Math.max(maxY, label.position.y);
   }
   
   const dataWidth = maxX - minX || 1;
@@ -537,7 +552,7 @@ export async function exportFloorPlanToPDF(
     // Translate to page center (flip Y for PDF coordinates)
     return {
       x: centerX + x,
-      y: centerY - y
+      y: centerY + y
     };
   };
   
@@ -557,6 +572,43 @@ export async function exportFloorPlanToPDF(
     
     // Draw architectural dimension line
     drawDimensionLine(ctx, start, end, line.distanceFeet, textSize, dimensionLineScale);
+  }
+  
+  // Draw text labels
+  for (const label of textLabels) {
+    const pos = transform(label.position);
+    
+    // Set font (use same size as dimension text)
+    ctx.font = `bold ${textSize}px Arial, sans-serif`;
+    const textMetrics = ctx.measureText(label.text);
+    const labelPadding = 4;
+    const labelWidth = textMetrics.width + labelPadding * 2;
+    const labelHeight = textSize * 1.4;
+    
+    // Draw background rectangle
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(
+      pos.x - labelWidth / 2, 
+      pos.y - labelHeight / 2, 
+      labelWidth, 
+      labelHeight
+    );
+    
+    // Draw border
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(
+      pos.x - labelWidth / 2, 
+      pos.y - labelHeight / 2, 
+      labelWidth, 
+      labelHeight
+    );
+    
+    // Draw text
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label.text, pos.x, pos.y);
   }
   
   // Draw sheet title in bottom right corner

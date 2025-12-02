@@ -67,6 +67,13 @@ export interface FloorPlanLine {
   distanceFeet: number;
 }
 
+// Floor plan text label for room/object annotations
+export interface FloorPlanTextLabel {
+  id: string;
+  position: { x: number; y: number };  // View units (same as FloorPlanLine)
+  text: string;
+}
+
 export interface ScanData {
   date: string;
   modelUrl?: string;

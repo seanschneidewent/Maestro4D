@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CubeIcon, PencilIcon, CloseIcon, TrashIcon, PointCloudIcon, SettingsIcon } from './Icons';
-import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig, FloorPlanLine } from '../types';
+import { ThreeDAnnotation, ThreeDPoint, SliceBoxConfig, FloorPlanLine, FloorPlanTextLabel } from '../types';
 import PointCloudSettingsPanel from './PointCloudSettingsPanel';
 import AnalysisToolsPanel from './AnalysisToolsPanel';
 import FloorPlanResultsPanel from './FloorPlanResultsPanel';
@@ -54,6 +54,10 @@ const Viewer: React.FC<ViewerProps> = ({
   const [showPointCloudSettings, setShowPointCloudSettings] = useState(false);
   const [showAnalysisTools, setShowAnalysisTools] = useState(false);
   const [showFloorPlanResults, setShowFloorPlanResults] = useState(false);
+  
+  // 3D model visibility state (for performance when working in Top-Down Preview)
+  const [is3DVisible, setIs3DVisible] = useState(true);
+  const is3DVisibleRef = useRef(true); // Ref for animation loop access
   
   // Point cloud settings state (placeholder values)
   const [pointSize, setPointSize] = useState(1.0);
@@ -145,6 +149,17 @@ const Viewer: React.FC<ViewerProps> = ({
   const [hoveredSnapPoint, setHoveredSnapPoint] = useState<Point2D | null>(null);
   const [currentMousePos, setCurrentMousePos] = useState<{ x: number; y: number } | null>(null);
 
+  // Floor plan text label state
+  const [floorPlanTextLabels, setFloorPlanTextLabels] = useState<FloorPlanTextLabel[]>([]);
+  const [isAddingText, setIsAddingText] = useState(false);
+  const [selectedTextLabelId, setSelectedTextLabelId] = useState<string | null>(null);
+  const [editingTextLabelId, setEditingTextLabelId] = useState<string | null>(null);
+
+  // Delete mode state for batch deletion
+  const [isFloorPlanDeleteMode, setIsFloorPlanDeleteMode] = useState(false);
+  const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
+  const [selectedTextLabelIds, setSelectedTextLabelIds] = useState<string[]>([]);
+
   // Drawing rotation state (degrees, 0-360)
   const [drawingRotation, setDrawingRotation] = useState(0);
 
@@ -159,6 +174,11 @@ const Viewer: React.FC<ViewerProps> = ({
 
   // Sheet title for PDF export
   const [sheetTitle, setSheetTitle] = useState('');
+
+  // Sync 3D visibility state to ref for animation loop access
+  useEffect(() => {
+    is3DVisibleRef.current = is3DVisible;
+  }, [is3DVisible]);
 
   // Helper to calculate distance between two 3D points
   const calculateDistance = (start: ThreeDPoint, end: ThreeDPoint): number => {
@@ -556,17 +576,19 @@ const Viewer: React.FC<ViewerProps> = ({
       const startScreen = transform(line.start);
       const endScreen = transform(line.end);
       
-      // Line stroke
+      // Line stroke - check for delete mode selection
       const isSelected = line.id === selectedLineId;
-      ctx.strokeStyle = isSelected ? '#fbbf24' : '#00ff88';  // Yellow if selected, green otherwise
-      ctx.lineWidth = isSelected ? 3 : 2;
+      const isMarkedForDeletion = selectedLineIds.includes(line.id);
+      const lineColor = isMarkedForDeletion ? '#ef4444' : (isSelected ? '#fbbf24' : '#00ff88');  // Red for deletion, yellow if selected, green otherwise
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = (isSelected || isMarkedForDeletion) ? 3 : 2;
       ctx.beginPath();
       ctx.moveTo(startScreen.x, startScreen.y);
       ctx.lineTo(endScreen.x, endScreen.y);
       ctx.stroke();
       
       // Endpoint circles
-      ctx.fillStyle = isSelected ? '#fbbf24' : '#00ff88';
+      ctx.fillStyle = lineColor;
       ctx.beginPath();
       ctx.arc(startScreen.x, startScreen.y, 4, 0, Math.PI * 2);
       ctx.fill();
@@ -593,7 +615,7 @@ const Viewer: React.FC<ViewerProps> = ({
       const labelWidth = textMetrics.width + labelPadding * 2;
       const labelHeight = 16;
       
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.fillStyle = isMarkedForDeletion ? 'rgba(127, 29, 29, 0.9)' : 'rgba(0, 0, 0, 0.8)';
       ctx.fillRect(
         midX - labelWidth / 2, 
         midY - labelHeight / 2, 
@@ -602,7 +624,7 @@ const Viewer: React.FC<ViewerProps> = ({
       );
       
       // Label text
-      ctx.fillStyle = isSelected ? '#fbbf24' : '#00ff88';
+      ctx.fillStyle = lineColor;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(distLabel, midX, midY);
@@ -654,7 +676,53 @@ const Viewer: React.FC<ViewerProps> = ({
       ctx.arc(snapScreen.x, snapScreen.y, 5, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [previewPoints, previewPointSize, previewPanelSize, previewZoom, previewPan, floorPlanLines, selectedLineId, lineStartPoint, currentMousePos, hoveredSnapPoint, isDrawingLines, drawingRotation, sliceMode]);
+
+    // Draw text labels
+    for (const label of floorPlanTextLabels) {
+      // Skip rendering if this label is being edited (we show HTML input instead)
+      if (label.id === editingTextLabelId) continue;
+      
+      const labelScreen = transform(label.position);
+      const isSelected = label.id === selectedTextLabelId;
+      const isMarkedForDeletion = selectedTextLabelIds.includes(label.id);
+      
+      // Set font
+      ctx.font = 'bold 12px Arial';
+      const textMetrics = ctx.measureText(label.text);
+      const labelPadding = 4;
+      const labelWidth = textMetrics.width + labelPadding * 2;
+      const labelHeight = 16;
+      
+      // Background for label - red for deletion, yellow for selected, amber otherwise
+      ctx.fillStyle = isMarkedForDeletion 
+        ? 'rgba(239, 68, 68, 0.9)' 
+        : (isSelected ? 'rgba(251, 191, 36, 0.9)' : 'rgba(245, 158, 11, 0.85)');
+      ctx.fillRect(
+        labelScreen.x - labelWidth / 2, 
+        labelScreen.y - labelHeight / 2, 
+        labelWidth, 
+        labelHeight
+      );
+      
+      // Border for selected or marked for deletion
+      if (isSelected || isMarkedForDeletion) {
+        ctx.strokeStyle = isMarkedForDeletion ? '#ef4444' : '#fbbf24';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          labelScreen.x - labelWidth / 2, 
+          labelScreen.y - labelHeight / 2, 
+          labelWidth, 
+          labelHeight
+        );
+      }
+      
+      // Label text
+      ctx.fillStyle = isMarkedForDeletion ? '#ffffff' : '#000000';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label.text, labelScreen.x, labelScreen.y);
+    }
+  }, [previewPoints, previewPointSize, previewPanelSize, previewZoom, previewPan, floorPlanLines, selectedLineId, selectedLineIds, lineStartPoint, currentMousePos, hoveredSnapPoint, isDrawingLines, drawingRotation, sliceMode, floorPlanTextLabels, selectedTextLabelId, selectedTextLabelIds, editingTextLabelId]);
 
   // Initialize preview panel position when it first becomes visible
   useEffect(() => {
@@ -962,7 +1030,76 @@ const Viewer: React.FC<ViewerProps> = ({
     return nearestId;
   }, [previewPoints, previewZoom, previewPan, floorPlanLines, sliceMode, drawingRotation]);
 
-  // Handle click on preview canvas for line drawing
+  // Find nearest text label to screen point (for selection)
+  const findNearestTextLabel = useCallback((
+    screenX: number,
+    screenY: number,
+    selectionRadius: number = 20
+  ): string | null => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || previewPoints.length === 0 || floorPlanTextLabels.length === 0) return null;
+
+    // Calculate bounds from points (same as in render effect)
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    for (const p of previewPoints) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    
+    const dataWidth = maxX - minX || 1;
+    const dataHeight = maxY - minY || 1;
+    const dataCenterX = (minX + maxX) / 2;
+    const dataCenterY = (minY + maxY) / 2;
+    
+    const padFraction = 0.05;
+    const scale = Math.min(
+      (canvas.width * (1 - 2 * padFraction)) / dataWidth,
+      (canvas.height * (1 - 2 * padFraction)) / dataHeight
+    ) * previewZoom;
+    
+    const canvasCenterX = canvas.width / 2 + previewPan.x;
+    const canvasCenterY = canvas.height / 2 + previewPan.y;
+    
+    // Rotation for coordinate transform
+    const rotRad = (drawingRotation * Math.PI) / 180;
+    const cos = Math.cos(rotRad);
+    const sin = Math.sin(rotRad);
+    const flipY = sliceMode === 'horizontal' ? -1 : 1;
+
+    // Transform function (same as in render)
+    const transform = (p: Point2D) => {
+      const dx = p.x - dataCenterX;
+      const dy = p.y - dataCenterY;
+      const rx = dx * cos - dy * sin;
+      const ry = dx * sin + dy * cos;
+      return {
+        x: canvasCenterX + rx * scale,
+        y: canvasCenterY + ry * scale * flipY
+      };
+    };
+
+    let nearestId: string | null = null;
+    let nearestDist = selectionRadius;
+
+    for (const label of floorPlanTextLabels) {
+      const labelScreen = transform(label.position);
+      const dist = Math.sqrt(
+        Math.pow(screenX - labelScreen.x, 2) + Math.pow(screenY - labelScreen.y, 2)
+      );
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestId = label.id;
+      }
+    }
+
+    return nearestId;
+  }, [previewPoints, previewZoom, previewPan, floorPlanTextLabels, sliceMode, drawingRotation]);
+
+  // Handle click on preview canvas for line drawing and text labels
   const handlePreviewCanvasClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = previewCanvasRef.current;
     if (!canvas) return;
@@ -974,7 +1111,30 @@ const Viewer: React.FC<ViewerProps> = ({
     const canvasX = (event.clientX - rect.left) * scaleX;
     const canvasY = (event.clientY - rect.top) * scaleY;
 
-    if (isDrawingLines) {
+    if (isAddingText) {
+      // Text label mode
+      // First check if clicking on existing text label to select/edit it
+      const nearestTextId = findNearestTextLabel(canvasX, canvasY);
+      if (nearestTextId) {
+        setSelectedTextLabelId(nearestTextId);
+        setEditingTextLabelId(nearestTextId);
+        setSelectedLineId(null);
+      } else {
+        // Click on empty space - create new text label
+        const dataPoint = screenToData(canvasX, canvasY);
+        if (dataPoint) {
+          const newLabel: FloorPlanTextLabel = {
+            id: Math.random().toString(36).substring(2, 10),
+            position: dataPoint,
+            text: 'Label',
+          };
+          setFloorPlanTextLabels(prev => [...prev, newLabel]);
+          setSelectedTextLabelId(newLabel.id);
+          setEditingTextLabelId(newLabel.id);
+          setSelectedLineId(null);
+        }
+      }
+    } else if (isDrawingLines) {
       // Line drawing mode
       // Check for snap point first
       const snapPoint = findNearestSnapPoint(canvasX, canvasY);
@@ -1003,45 +1163,62 @@ const Viewer: React.FC<ViewerProps> = ({
         setLineStartPoint(null);
         setHoveredSnapPoint(null);
       }
+    } else if (isFloorPlanDeleteMode) {
+      // Delete mode - toggle multi-selection for batch deletion
+      const nearestTextId = findNearestTextLabel(canvasX, canvasY);
+      if (nearestTextId) {
+        setSelectedTextLabelIds(prev => 
+          prev.includes(nearestTextId) 
+            ? prev.filter(id => id !== nearestTextId)
+            : [...prev, nearestTextId]
+        );
+        return;
+      }
+      
+      const nearestLineId = findNearestLine(canvasX, canvasY);
+      if (nearestLineId) {
+        setSelectedLineIds(prev => 
+          prev.includes(nearestLineId)
+            ? prev.filter(id => id !== nearestLineId)
+            : [...prev, nearestLineId]
+        );
+      }
+      // In delete mode, clicking empty space does nothing (keep selections)
     } else {
-      // Selection mode - check if clicking near a line
+      // Selection mode - check if clicking near a text label first
+      const nearestTextId = findNearestTextLabel(canvasX, canvasY);
+      if (nearestTextId) {
+        setSelectedTextLabelId(nearestTextId);
+        setSelectedLineId(null);
+        return;
+      }
+      
+      // Then check if clicking near a line
       const nearestLineId = findNearestLine(canvasX, canvasY);
       if (nearestLineId) {
         setSelectedLineId(nearestLineId);
+        setSelectedTextLabelId(null);
       } else {
         // Clicked empty space - deselect
         setSelectedLineId(null);
+        setSelectedTextLabelId(null);
+        setEditingTextLabelId(null);
       }
     }
-  }, [isDrawingLines, lineStartPoint, findNearestSnapPoint, screenToData, findNearestLine]);
+  }, [isDrawingLines, isAddingText, isFloorPlanDeleteMode, lineStartPoint, findNearestSnapPoint, screenToData, findNearestLine, findNearestTextLabel]);
 
-  // Handle drag-to-pan on preview canvas
+  // Handle drag-to-pan on preview canvas (right/middle click only)
   const handlePreviewMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     // Right click (button 2) or middle click (button 1) to pan - works in all modes
+    // Left click is reserved for selection (handled by onClick)
     if (event.button === 2 || event.button === 1) {
       event.preventDefault();
       previewDragRef.current = {
         isDragging: true,
         lastPos: { x: event.clientX, y: event.clientY }
       };
-      return;
     }
-    
-    // In draw mode, left click is for drawing, not panning
-    if (isDrawingLines && event.button === 0) {
-      // Don't start dragging, let click handler deal with it
-      return;
-    }
-    
-    // Left click to pan (only when not in draw mode)
-    if (event.button === 0) {
-      event.preventDefault();
-      previewDragRef.current = {
-        isDragging: true,
-        lastPos: { x: event.clientX, y: event.clientY }
-      };
-    }
-  }, [isDrawingLines]);
+  }, []);
 
   const handlePreviewMouseMove = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = previewCanvasRef.current;
@@ -1708,8 +1885,14 @@ const Viewer: React.FC<ViewerProps> = ({
   // Handle Delete/Backspace key, Escape, and Arrow keys for point editing
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-        // Escape key - exit editing mode or slice XZ move mode
+        // Escape key - exit editing mode, delete mode, or slice XZ move mode
         if (e.key === 'Escape') {
+            if (isFloorPlanDeleteMode) {
+                setIsFloorPlanDeleteMode(false);
+                setSelectedLineIds([]);
+                setSelectedTextLabelIds([]);
+                return;
+            }
             if (isSliceSelectedForMove) {
                 setIsSliceSelectedForMove(false);
                 return;
@@ -1843,7 +2026,7 @@ const Viewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete, editingPoint, annotations, onAnnotationUpdate, computePerpendicularBasis, isSliceBoxActive, sliceBoxConfig, isSliceSelectedForMove]);
+  }, [selectedAnnotationId, onAnnotationDelete, isDeleteMode, annotationsToDelete, editingPoint, annotations, onAnnotationUpdate, computePerpendicularBasis, isSliceBoxActive, sliceBoxConfig, isSliceSelectedForMove, isFloorPlanDeleteMode]);
 
 
   useEffect(() => {
@@ -1954,6 +2137,8 @@ const Viewer: React.FC<ViewerProps> = ({
     
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
+      // Skip rendering when 3D view is hidden (for performance)
+      if (!is3DVisibleRef.current) return;
       // Safety check: ensure controls are enabled unless we're actively dragging a point or editing slice box
       if (!isDraggingRef.current && !isSliceBoxEditingRef.current && !controls.enabled) {
         controls.enabled = true;
@@ -2139,6 +2324,7 @@ const Viewer: React.FC<ViewerProps> = ({
       <div 
         ref={mountRef} 
         className={`w-full h-full rounded-lg ${(isEditing || isMeasuring) ? 'cursor-crosshair' : (editingPoint || draggingHandle) ? 'cursor-move' : isSliceSelectedForMove ? 'cursor-grab' : isSliceBoxActive ? 'cursor-pointer' : 'cursor-default'}`}
+        style={{ display: is3DVisible ? 'block' : 'none' }}
         onClick={handleCanvasClick}
         onDoubleClick={handleCanvasDoubleClick}
         onMouseDown={handleCanvasMouseDown}
@@ -2163,6 +2349,28 @@ const Viewer: React.FC<ViewerProps> = ({
             
              {/* Edit Mode Toggle, Measure & Delete Buttons */}
             <div className="absolute top-4 right-4 flex gap-2">
+                 <button
+                   onClick={() => setIs3DVisible(!is3DVisible)}
+                   className={`px-4 py-2 backdrop-blur-sm border border-gray-700/50 text-white text-sm font-semibold rounded-md transition-colors pointer-events-auto flex items-center gap-2 ${
+                     is3DVisible ? 'bg-gray-800/80 hover:bg-gray-700' : 'bg-amber-600 hover:bg-amber-700'
+                   }`}
+                   title={is3DVisible ? 'Hide 3D Model' : 'Show 3D Model'}
+                 >
+                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                     {is3DVisible ? (
+                       <>
+                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                         <circle cx="12" cy="12" r="3" />
+                       </>
+                     ) : (
+                       <>
+                         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                         <line x1="1" y1="1" x2="23" y2="23" />
+                       </>
+                     )}
+                   </svg>
+                   {is3DVisible ? 'Hide 3D' : 'Show 3D'}
+                 </button>
                  <button
                    onClick={() => {
                      console.log('[GLB Viewer] Settings button clicked');
@@ -2351,10 +2559,14 @@ const Viewer: React.FC<ViewerProps> = ({
                       onClick={() => {
                         const newMode = sliceMode === 'horizontal' ? 'vertical' : 'horizontal';
                         setSliceMode(newMode);
-                        // Clear drawn lines when switching modes
+                        // Clear drawn lines and text labels when switching modes
                         setFloorPlanLines([]);
                         setLineStartPoint(null);
                         setSelectedLineId(null);
+                        setFloorPlanTextLabels([]);
+                        setSelectedTextLabelId(null);
+                        setEditingTextLabelId(null);
+                        setIsAddingText(false);
                         // Reset zoom/pan
                         setPreviewZoom(1);
                         setPreviewPan({ x: 0, y: 0 });
@@ -2402,6 +2614,16 @@ const Viewer: React.FC<ViewerProps> = ({
                           setHoveredSnapPoint(null);
                           setCurrentMousePos(null);
                         }
+                        // Disable text mode when entering draw mode
+                        if (!isDrawingLines) {
+                          setIsAddingText(false);
+                          setSelectedTextLabelId(null);
+                          setEditingTextLabelId(null);
+                          // Exit delete mode when entering draw mode
+                          setIsFloorPlanDeleteMode(false);
+                          setSelectedLineIds([]);
+                          setSelectedTextLabelIds([]);
+                        }
                         // Clear selection when toggling draw mode
                         setSelectedLineId(null);
                       }}
@@ -2422,35 +2644,108 @@ const Viewer: React.FC<ViewerProps> = ({
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                       </svg>
                     </button>
-                    {/* Delete Selected Line Button - only show when line is selected */}
-                    {selectedLineId && (
-                      <button
-                        onClick={() => {
-                          setFloorPlanLines(prev => prev.filter(l => l.id !== selectedLineId));
+                    {/* Add Text Label Toggle Button */}
+                    <button
+                      onClick={() => {
+                        setIsAddingText(!isAddingText);
+                        if (isAddingText) {
+                          // Exiting text mode
+                          setSelectedTextLabelId(null);
+                          setEditingTextLabelId(null);
+                        }
+                        // Disable line drawing mode when entering text mode
+                        if (!isAddingText) {
+                          setIsDrawingLines(false);
+                          setLineStartPoint(null);
+                          setHoveredSnapPoint(null);
+                          setCurrentMousePos(null);
                           setSelectedLineId(null);
-                        }}
-                        className="p-1 hover:bg-red-600 rounded transition-colors"
-                        title="Delete Selected Line"
+                          // Exit delete mode when entering text mode
+                          setIsFloorPlanDeleteMode(false);
+                          setSelectedLineIds([]);
+                          setSelectedTextLabelIds([]);
+                        }
+                      }}
+                      className={`p-1 rounded transition-colors ${
+                        isAddingText 
+                          ? 'bg-amber-600 hover:bg-amber-700' 
+                          : 'hover:bg-gray-700'
+                      }`}
+                      title={isAddingText ? 'Exit Text Mode' : 'Add Text Labels'}
+                    >
+                      <svg 
+                        className={`h-4 w-4 ${isAddingText ? 'text-white' : 'text-gray-400'}`}
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2"
                       >
-                        <svg 
-                          className="h-4 w-4 text-red-400 hover:text-white"
-                          viewBox="0 0 24 24" 
-                          fill="none" 
-                          stroke="currentColor" 
-                          strokeWidth="2"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    )}
-                    {/* Export PDF Button - only show when there are lines */}
-                    {floorPlanLines.length > 0 && (
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h8m-8 6h16M9 6v12" />
+                      </svg>
+                    </button>
+                    {/* Delete Mode Button - always visible */}
+                    <button
+                      onClick={() => {
+                        if (isFloorPlanDeleteMode) {
+                          // In delete mode - if items selected, delete them
+                          if (selectedLineIds.length > 0 || selectedTextLabelIds.length > 0) {
+                            setFloorPlanLines(prev => prev.filter(l => !selectedLineIds.includes(l.id)));
+                            setFloorPlanTextLabels(prev => prev.filter(l => !selectedTextLabelIds.includes(l.id)));
+                            setSelectedLineIds([]);
+                            setSelectedTextLabelIds([]);
+                          }
+                          // Exit delete mode
+                          setIsFloorPlanDeleteMode(false);
+                        } else {
+                          // Enter delete mode
+                          setIsFloorPlanDeleteMode(true);
+                          // Clear single selections
+                          setSelectedLineId(null);
+                          setSelectedTextLabelId(null);
+                          setEditingTextLabelId(null);
+                          // Exit other modes
+                          setIsDrawingLines(false);
+                          setIsAddingText(false);
+                          setLineStartPoint(null);
+                        }
+                      }}
+                      className={`p-1 rounded transition-colors relative ${
+                        isFloorPlanDeleteMode 
+                          ? 'bg-red-600 hover:bg-red-700' 
+                          : 'hover:bg-gray-700'
+                      }`}
+                      title={isFloorPlanDeleteMode 
+                        ? (selectedLineIds.length + selectedTextLabelIds.length > 0 
+                          ? `Delete ${selectedLineIds.length + selectedTextLabelIds.length} selected item(s)` 
+                          : 'Exit Delete Mode')
+                        : 'Delete Mode'
+                      }
+                    >
+                      <svg 
+                        className={`h-4 w-4 ${isFloorPlanDeleteMode ? 'text-white' : 'text-red-400 hover:text-white'}`}
+                        viewBox="0 0 24 24" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        strokeWidth="2"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      {/* Selection count badge */}
+                      {isFloorPlanDeleteMode && (selectedLineIds.length + selectedTextLabelIds.length) > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-white text-red-600 text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                          {selectedLineIds.length + selectedTextLabelIds.length}
+                        </span>
+                      )}
+                    </button>
+                    {/* Export PDF Button - only show when there are lines or text labels */}
+                    {(floorPlanLines.length > 0 || floorPlanTextLabels.length > 0) && (
                       <button
                         onClick={() => {
                           const prefix = sliceMode === 'vertical' ? 'elevation' : 'floor_plan';
                           const filename = `${prefix}_${new Date().toISOString().split('T')[0]}.pdf`;
                           exportFloorPlanToPDF(
                             floorPlanLines,
+                            floorPlanTextLabels,
                             drawingRotation,
                             originalScaleFactorRef.current,
                             filename,
@@ -2554,7 +2849,7 @@ const Viewer: React.FC<ViewerProps> = ({
                         ref={previewCanvasRef} 
                         width={Math.max(100, previewPanelSize.width - 16)} 
                         height={Math.max(100, previewPanelSize.height - 80)} 
-                        className={`w-full h-full ${isDrawingLines ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
+                        className={`w-full h-full ${isDrawingLines || isAddingText ? 'cursor-crosshair' : 'cursor-default'}`}
                         onWheel={handlePreviewWheel}
                         onClick={handlePreviewCanvasClick}
                         onMouseDown={handlePreviewMouseDown}
@@ -2563,11 +2858,87 @@ const Viewer: React.FC<ViewerProps> = ({
                         onMouseLeave={handlePreviewMouseLeave}
                         onContextMenu={(e) => e.preventDefault()}
                       />
-                      {/* Zoom level, point count, and line count overlay */}
+                      {/* Inline text label editor overlay */}
+                      {editingTextLabelId && (() => {
+                        const label = floorPlanTextLabels.find(l => l.id === editingTextLabelId);
+                        if (!label || previewPoints.length === 0) return null;
+                        
+                        const canvas = previewCanvasRef.current;
+                        if (!canvas) return null;
+                        
+                        // Calculate screen position using same transform as canvas render
+                        let minX = Infinity, maxX = -Infinity;
+                        let minY = Infinity, maxY = -Infinity;
+                        for (const p of previewPoints) {
+                          if (p.x < minX) minX = p.x;
+                          if (p.x > maxX) maxX = p.x;
+                          if (p.y < minY) minY = p.y;
+                          if (p.y > maxY) maxY = p.y;
+                        }
+                        const dataWidth = maxX - minX || 1;
+                        const dataHeight = maxY - minY || 1;
+                        const dataCenterX = (minX + maxX) / 2;
+                        const dataCenterY = (minY + maxY) / 2;
+                        const padFraction = 0.05;
+                        const scale = Math.min(
+                          (canvas.width * (1 - 2 * padFraction)) / dataWidth,
+                          (canvas.height * (1 - 2 * padFraction)) / dataHeight
+                        ) * previewZoom;
+                        const canvasCenterX = canvas.width / 2 + previewPan.x;
+                        const canvasCenterY = canvas.height / 2 + previewPan.y;
+                        const rotRad = (drawingRotation * Math.PI) / 180;
+                        const cos = Math.cos(rotRad);
+                        const sin = Math.sin(rotRad);
+                        const flipY = sliceMode === 'horizontal' ? -1 : 1;
+                        
+                        const dx = label.position.x - dataCenterX;
+                        const dy = label.position.y - dataCenterY;
+                        const rx = dx * cos - dy * sin;
+                        const ry = dx * sin + dy * cos;
+                        const screenX = canvasCenterX + rx * scale;
+                        const screenY = canvasCenterY + ry * scale * flipY;
+                        
+                        // Convert canvas coords to CSS coords (canvas may be scaled)
+                        const rect = canvas.getBoundingClientRect();
+                        const cssX = (screenX / canvas.width) * rect.width;
+                        const cssY = (screenY / canvas.height) * rect.height;
+                        
+                        return (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={label.text}
+                            onChange={(e) => {
+                              setFloorPlanTextLabels(prev => 
+                                prev.map(l => l.id === editingTextLabelId 
+                                  ? { ...l, text: e.target.value }
+                                  : l
+                                )
+                              );
+                            }}
+                            onKeyDown={(e) => {
+                              // Prevent Enter from submitting forms or causing issues
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            onBlur={() => setEditingTextLabelId(null)}
+                            className="absolute px-1 py-0.5 text-xs font-bold bg-amber-500 text-black border-2 border-amber-400 rounded outline-none text-center min-w-[60px]"
+                            style={{
+                              left: cssX,
+                              top: cssY,
+                              transform: 'translate(-50%, -50%)',
+                            }}
+                          />
+                        );
+                      })()}
+                      {/* Zoom level, point count, line count, and text label count overlay */}
                       <div className="absolute bottom-2 left-2 text-xs text-gray-500 font-mono pointer-events-none">
                         {previewZoom !== 1 && <span className="text-cyan-400">{previewZoom.toFixed(1)}x · </span>}
                         {previewPoints.length.toLocaleString()} pts
                         {floorPlanLines.length > 0 && <span className="text-green-400"> · {floorPlanLines.length} lines</span>}
+                        {floorPlanTextLabels.length > 0 && <span className="text-amber-400"> · {floorPlanTextLabels.length} labels</span>}
                       </div>
                     </div>
                     
