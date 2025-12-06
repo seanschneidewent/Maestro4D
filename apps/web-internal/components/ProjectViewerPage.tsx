@@ -4,7 +4,7 @@ import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
 import PdfToolsPanel from './PdfToolsPanel';
-import InsightsList from './InsightsList';
+import { ContextPanel } from './context-panel';
 import ReferencePanel from './ReferencePanel';
 import InsightChatPanel from './InsightChatPanel';
 import TimelineScrubber from './TimelineScrubber';
@@ -3064,16 +3064,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         </div>
                     ) : (
                         <div className="w-full h-full flex flex-col border-l border-gray-800 overflow-hidden">
-                            <InsightsList
-                                insights={currentScan?.insights || []}
-                                onUploadInsights={handleUploadInsights}
-                                onInsightStatusChange={handleInsightStatusChange}
-                                onAddNote={handleAddNote}
-                                onReassignTrade={handleReassignTrade}
-                                onOpenInsightChat={setActiveInsightChatId}
-                                onCloseInsightChat={() => setActiveInsightChatId(null)}
-                                activeInsightChatId={activeInsightChatId}
-                                highlightedInsightId={highlightedInsightId}
+                            <ContextPanel
+                                fileTree={displayedFileSystemTree}
+                                onNodeSelect={handleSelectNode}
+                                scanData={currentScan}
                             />
                         </div>
                     )}
