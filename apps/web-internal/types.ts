@@ -19,18 +19,6 @@ export interface PdfStroke {
   tool: PdfTool;
 }
 
-// Annotation group linking rectangle snapshots with arrow text annotations
-export interface AnnotationGroup {
-  id: string; // Unique group ID shared between rectangle and arrow
-  rectangleId: string; // ID of the rectangle annotation
-  arrowId: string; // ID of the arrow annotation
-  pageNumber: number; // Page number where annotations exist
-  snapshotDataUrl: string; // PNG data URL of the captured region
-  text: string; // Text content from arrow annotation
-  html?: string; // HTML content from arrow annotation
-  createdAt: string; // ISO timestamp of creation
-}
-
 export interface ThreeDPoint {
   x: number;
   y: number;
@@ -79,7 +67,6 @@ export interface ScanData {
   modelUrl?: string;
   pdfUrl?: string;
   pdfAnnotations?: Record<number, PdfAnnotation[]>;
-  pdfAnnotationGroups?: AnnotationGroup[]; // Linked annotation groups with snapshots
   threeDAnnotations?: ThreeDAnnotation[];
   centerViewerFiles?: SerializableFile[];
   insights: Insight[];
@@ -211,14 +198,4 @@ export interface ProjectSummary {
   totalDeviations: number;
   deviationsBySeverity: Record<string, number>;
   deviationsByStatus: Record<string, number>;
-}
-
-export interface Annotation {
-  id: string;
-  fileId: string;
-  title: string;
-  description: string;
-  linkedRectangleId?: string;
-  linkedRectangleIds?: string[];
-  linkedThreeDPointIds?: string[];
 }

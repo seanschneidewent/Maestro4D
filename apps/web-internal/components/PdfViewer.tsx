@@ -2,7 +2,8 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Rnd } from 'react-rnd';
 import { DocumentIcon, PenIcon, TextIcon, ArrowToolIcon, RectangleIcon, UndoIcon, RedoIcon, TrashIcon, ZoomInIcon, ZoomOutIcon, ZoomResetIcon, PencilIcon, CloseIcon, ChevronDownIcon, ChevronUpIcon } from './Icons';
-import { PdfAnnotation, PdfStroke, AnnotationGroup } from '../types';
+import { PdfAnnotation, PdfStroke } from '../types';
+import { ContextPointer } from '../types/context';
 
 // Set up PDF.js worker - use the version that matches react-pdf's bundled pdfjs-dist
 if (typeof window !== 'undefined') {
@@ -42,14 +43,14 @@ interface PdfViewerProps {
   onPdfUpload?: (url: string) => void;
   annotations?: Record<number, PdfAnnotation[]>;
   onAnnotationsChange?: (annotations: Record<number, PdfAnnotation[]>) => void;
-  annotationGroups?: AnnotationGroup[];
-  onAnnotationGroupsChange?: (groups: AnnotationGroup[]) => void;
   isToolsOpen?: boolean;
   onToolsOpenChange?: (open: boolean) => void;
   onToolbarHandlersReady?: (handlers: PdfToolbarHandlers) => void;
   renderToolbarExternally?: boolean;
   toolbarRef?: React.RefObject<HTMLDivElement>;
-  onRectangleCreated?: (rectangleId: string) => void;
+  // Unified ContextPointer system for rectangles
+  pointers?: ContextPointer[];
+  onPointerCreate?: (pointer: Omit<ContextPointer, 'title' | 'description'>) => void;
   visibleRectangleIds?: Set<string>;
 }
 
@@ -165,7 +166,7 @@ const TextAnnotationEditor: React.FC<TextAnnotationEditorProps> = ({
   );
 };
 
-const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, annotationGroups: externalAnnotationGroups, onAnnotationGroupsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef, onRectangleCreated, visibleRectangleIds }) => {
+const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef, pointers, onPointerCreate, visibleRectangleIds }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isPanningRef = useRef(false);
@@ -271,7 +272,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
   const resizeTimeoutRef = useRef<number | null>(null);
   const baseWidthRef = useRef<number | null>(null);
   const basePageDimensionsRef = useRef<Record<number, { width: number; height: number }>>({});
-  const [annotationGroups, setAnnotationGroups] = useState<AnnotationGroup[]>(externalAnnotationGroups || []);
   const pageRefs = useRef<Record<number, HTMLDivElement>>({});
 
   // Debounced container width update - snaps after panel animation completes
@@ -406,6 +406,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Draw internal annotations (strokes, arrows - NOT rectangles)
     annotations.forEach((annotation) => {
       if (annotation.kind === 'stroke') {
         if (annotation.points.length === 0) return;
@@ -461,36 +462,41 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
           endY - arrowLength * Math.sin(angle + arrowAngle)
         );
         ctx.stroke();
-      } else if (annotation.kind === 'rectangle') {
-        // Check if this rectangle should be visible
-        if (visibleRectangleIds && !visibleRectangleIds.has(annotation.id)) {
-          return; // Skip rendering this rectangle
-        }
-
-        const x = annotation.xNorm * canvas.width;
-        const y = annotation.yNorm * canvas.height;
-        const w = annotation.wNorm * canvas.width;
-        const h = annotation.hNorm * canvas.height;
-
-        ctx.beginPath();
-
-        // Create radial gradient for stroke
-        const centerX = x + w / 2;
-        const centerY = y + h / 2;
-        const radius = Math.sqrt(w * w + h * h) / 2;
-
-        const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
-        gradient.addColorStop(0, '#3b82f6'); // Blue
-        gradient.addColorStop(1, '#06b6d4'); // Cyan
-
-        ctx.strokeStyle = gradient;
-        ctx.lineWidth = annotation.width;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeRect(x, y, w, h);
       }
       // Text annotations are rendered as DOM overlays, not on canvas
+      // Rectangles are now rendered from pointers prop below
     });
-  }, [pageAnnotations, visibleRectangleIds]);
+
+    // Draw rectangles from pointers prop (unified ContextPointer system)
+    const pagePointers = (pointers || []).filter(p => p.pageNumber === pageNumber);
+    pagePointers.forEach((pointer) => {
+      // Check if this rectangle should be visible
+      if (visibleRectangleIds && !visibleRectangleIds.has(pointer.id)) {
+        return; // Skip rendering this rectangle
+      }
+
+      const x = pointer.bounds.xNorm * canvas.width;
+      const y = pointer.bounds.yNorm * canvas.height;
+      const w = pointer.bounds.wNorm * canvas.width;
+      const h = pointer.bounds.hNorm * canvas.height;
+
+      ctx.beginPath();
+
+      // Create radial gradient for stroke
+      const centerX = x + w / 2;
+      const centerY = y + h / 2;
+      const radius = Math.sqrt(w * w + h * h) / 2;
+
+      const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+      gradient.addColorStop(0, '#3b82f6'); // Blue
+      gradient.addColorStop(1, '#06b6d4'); // Cyan
+
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = pointer.style.strokeWidth;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeRect(x, y, w, h);
+    });
+  }, [pageAnnotations, pointers, visibleRectangleIds]);
 
   // Initialize overlay canvas size once at base dimensions
   const initBaseSize = useCallback((pageNumber: number) => {
@@ -543,20 +549,13 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     });
   }, [scale, redrawPage]);
 
-  // Update redraw when annotations change
+  // Update redraw when annotations or pointers change
   useEffect(() => {
     Object.keys(canvasRefs.current).forEach((pageNumStr) => {
       const pageNum = parseInt(pageNumStr, 10);
       redrawPage(pageNum);
     });
-  }, [pageAnnotations, redrawPage]);
-
-  // Sync external annotation groups
-  useEffect(() => {
-    if (externalAnnotationGroups) {
-      setAnnotationGroups(externalAnnotationGroups);
-    }
-  }, [externalAnnotationGroups]);
+  }, [pageAnnotations, pointers, redrawPage]);
 
   // Emit annotations to parent when pageAnnotations change
   useEffect(() => {
@@ -569,13 +568,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     });
     onAnnotationsChange(annotationsByPage);
   }, [pageAnnotations, onAnnotationsChange]);
-
-  // Emit annotation groups to parent when they change
-  useEffect(() => {
-    if (onAnnotationGroupsChange) {
-      onAnnotationGroupsChange(annotationGroups);
-    }
-  }, [annotationGroups, onAnnotationGroupsChange]);
 
   // Get normalized coordinates from pointer event
   const getNormalizedPoint = (e: React.PointerEvent<HTMLCanvasElement>, pageNumber: number): NormalizedPoint | null => {
@@ -601,20 +593,22 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const pdfCanvas = pageWrapper.querySelector('canvas') as HTMLCanvasElement;
       if (!pdfCanvas) return null;
 
-      const baseDims = basePageDimensionsRef.current[pageNumber];
-      if (!baseDims) return null;
+      // Use the actual PDF canvas dimensions (which are at the current rendered scale)
+      // Normalized coordinates are relative (0-1), so multiply by actual canvas size
+      const canvasWidth = pdfCanvas.width;
+      const canvasHeight = pdfCanvas.height;
 
-      // Calculate pixel coordinates from normalized coordinates
-      const x = Math.floor(xNorm * baseDims.width);
-      const y = Math.floor(yNorm * baseDims.height);
-      const w = Math.floor(wNorm * baseDims.width);
-      const h = Math.floor(hNorm * baseDims.height);
+      // Calculate pixel coordinates from normalized coordinates using actual canvas size
+      const x = Math.floor(xNorm * canvasWidth);
+      const y = Math.floor(yNorm * canvasHeight);
+      const w = Math.floor(wNorm * canvasWidth);
+      const h = Math.floor(hNorm * canvasHeight);
 
       // Ensure coordinates are within bounds
-      const clampedX = Math.max(0, Math.min(x, pdfCanvas.width));
-      const clampedY = Math.max(0, Math.min(y, pdfCanvas.height));
-      const clampedW = Math.min(w, pdfCanvas.width - clampedX);
-      const clampedH = Math.min(h, pdfCanvas.height - clampedY);
+      const clampedX = Math.max(0, Math.min(x, canvasWidth));
+      const clampedY = Math.max(0, Math.min(y, canvasHeight));
+      const clampedW = Math.min(w, canvasWidth - clampedX);
+      const clampedH = Math.min(h, canvasHeight - clampedY);
 
       if (clampedW <= 0 || clampedH <= 0) return null;
 
@@ -968,65 +962,32 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const w = Math.max(Math.abs(rectangleDraft.endX - rectangleDraft.startX), minSize);
       const h = Math.max(Math.abs(rectangleDraft.endY - rectangleDraft.startY), minSize);
 
-      const rectangleId = `rectangle-${Date.now()}-${Math.random()}`;
+      const pointerId = `pointer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-      // Capture snapshot asynchronously
+      // Capture snapshot and create pointer via callback
       capturePageSnapshot(pageNumber, x, y, w, h).then((snapshotDataUrl) => {
-        if (snapshotDataUrl) {
-          // Update rectangle annotation with snapshot
-          setPageAnnotations((prev) => {
-            const pageData = prev[pageNumber];
-            if (!pageData) return prev;
-
-            const updatedAnnotations = pageData.annotations.map(a =>
-              a.kind === 'rectangle' && a.id === rectangleId
-                ? { ...a, snapshotDataUrl }
-                : a
-            );
-
-            return {
-              ...prev,
-              [pageNumber]: {
-                ...pageData,
-                annotations: updatedAnnotations,
-              },
-            };
-          });
+        if (onPointerCreate) {
+          const pointer: Omit<ContextPointer, 'title' | 'description'> = {
+            id: pointerId,
+            pageNumber: pageNumber,
+            bounds: {
+              xNorm: x,
+              yNorm: y,
+              wNorm: w,
+              hNorm: h,
+            },
+            style: {
+              color: rectangleColor,
+              strokeWidth: strokeWidth,
+            },
+            snapshotDataUrl: snapshotDataUrl,
+            createdAt: new Date().toISOString(),
+          };
+          onPointerCreate(pointer);
         }
       });
 
-      const annotation: PdfAnnotation = {
-        kind: 'rectangle',
-        id: rectangleId,
-        xNorm: x,
-        yNorm: y,
-        wNorm: w,
-        hNorm: h,
-        color: rectangleColor,
-        width: strokeWidth,
-      };
-
-      setPageAnnotations((prev) => {
-        const pageData = prev[pageNumber] || { annotations: [], undoStack: [], redoStack: [] };
-        const newAnnotations = [...pageData.annotations, annotation];
-        const newUndoStack = [...pageData.undoStack, pageData.annotations];
-
-        return {
-          ...prev,
-          [pageNumber]: {
-            annotations: newAnnotations,
-            undoStack: newUndoStack.slice(-50),
-            redoStack: [],
-          },
-        };
-      });
-
       setRectangleDraft(null);
-      
-      // Notify parent that a rectangle was created
-      if (onRectangleCreated) {
-        onRectangleCreated(rectangleId);
-      }
     }
 
     const canvas = canvasRefs.current[pageNumber];
@@ -1196,14 +1157,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
       const updatedAnnotations = pageData.annotations.map(a => {
         if ((a.kind === 'text' || a.kind === 'arrow') && a.id === textId) {
-          // Update annotation group if this is an arrow with groupId
-          if (a.kind === 'arrow' && a.groupId) {
-            setAnnotationGroups(prevGroups =>
-              prevGroups.map(g =>
-                g.arrowId === textId ? { ...g, text, html } : g
-              )
-            );
-          }
           return { ...a, text, html };
         }
         return a;
@@ -1232,14 +1185,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
 
         const updatedAnnotations = pageData.annotations.map(a => {
           if ((a.kind === 'text' || a.kind === 'arrow') && a.id === textId) {
-            // Update annotation group if this is an arrow with groupId
-            if (a.kind === 'arrow' && a.groupId) {
-              setAnnotationGroups(prevGroups =>
-                prevGroups.map(g =>
-                  g.arrowId === textId ? { ...g, text, html } : g
-                )
-              );
-            }
             return { ...a, text, html };
           }
           return a;
@@ -1447,29 +1392,6 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
         },
       };
     });
-
-    // Remove annotation group if this was an arrow with groupId
-    if (annotation && annotation.kind === 'arrow' && annotation.groupId) {
-      setAnnotationGroups(prev => prev.filter(g => g.arrowId !== textId));
-
-      // Also remove the linked rectangle if it exists
-      if (annotation.linkedRectangleId) {
-        setPageAnnotations((prev) => {
-          const pageData = prev[pageNum];
-          if (!pageData) return prev;
-
-          return {
-            ...prev,
-            [pageNum]: {
-              ...pageData,
-              annotations: pageData.annotations.filter(a =>
-                !(a.kind === 'rectangle' && a.id === annotation.linkedRectangleId)
-              ),
-            },
-          };
-        });
-      }
-    }
 
     // Clear editing state if this annotation was being edited
     if (editingTextId === textId) {

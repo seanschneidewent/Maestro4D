@@ -1,52 +1,48 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Annotation } from '../types';
-import { ChevronDownIcon, ChevronUpIcon, PlusIcon, PencilIcon, CloseIcon, DocumentIcon } from './Icons';
+import React, { useState, useEffect } from 'react';
+import { ContextPointer } from '../types/context';
+import { ChevronDownIcon, ChevronUpIcon, PencilIcon, CloseIcon, DocumentIcon, RectangleIcon } from './Icons';
 
 interface AnnotationsPanelProps {
   selectedFileName: string | null;
-  annotations: Annotation[];
-  onAddAnnotation: (title: string, description: string) => void;
-  onEditAnnotation: (id: string, title: string, description: string) => void;
-  onDeleteAnnotation: (id: string) => void;
+  pointers: ContextPointer[];
+  onPointerUpdate: (id: string, updates: { title: string; description: string }) => void;
+  onPointerDelete: (id: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   height: number;
   onHeightChange: (newHeight: number) => void;
-  isAdding?: boolean;
-  onIsAddingChange?: (isAdding: boolean) => void;
+  // Controlled editing state for auto-opening form when pointer is created
+  editingPointerId?: string | null;
+  onEditingPointerIdChange?: (id: string | null) => void;
   selectedAnnotationIds?: Set<string>;
   onSelectedAnnotationIdsChange?: (ids: Set<string>) => void;
-  onAddRectangleToAnnotation?: (annotationId: string) => void;
 }
 
 const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   selectedFileName,
-  annotations,
-  onAddAnnotation,
-  onEditAnnotation,
-  onDeleteAnnotation,
+  pointers,
+  onPointerUpdate,
+  onPointerDelete,
   isCollapsed,
   onToggleCollapse,
   height,
   onHeightChange,
-  isAdding: controlledIsAdding,
-  onIsAddingChange,
+  editingPointerId: controlledEditingPointerId,
+  onEditingPointerIdChange,
   selectedAnnotationIds: controlledSelectedAnnotationIds,
   onSelectedAnnotationIdsChange,
-  onAddRectangleToAnnotation
 }) => {
   const [isResizing, setIsResizing] = useState(false);
-  const [internalIsAdding, setInternalIsAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [internalEditingId, setInternalEditingId] = useState<string | null>(null);
   const [internalSelectedAnnotationIds, setInternalSelectedAnnotationIds] = useState<Set<string>>(new Set());
   
-  // Use controlled state if provided, otherwise use internal state
-  const isAdding = controlledIsAdding !== undefined ? controlledIsAdding : internalIsAdding;
-  const setIsAdding = (value: boolean) => {
-    if (onIsAddingChange) {
-      onIsAddingChange(value);
+  // Use controlled editing state if provided, otherwise use internal state
+  const editingId = controlledEditingPointerId !== undefined ? controlledEditingPointerId : internalEditingId;
+  const setEditingId = (value: string | null) => {
+    if (onEditingPointerIdChange) {
+      onEditingPointerIdChange(value);
     } else {
-      setInternalIsAdding(value);
+      setInternalEditingId(value);
     }
   };
   
@@ -64,25 +60,21 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
 
-  // Reset form when starting to add or edit
-  useEffect(() => {
-    if (isAdding) {
-      setTitle('');
-      setDescription('');
-      setSelectedAnnotationIds(new Set());
-    }
-  }, [isAdding]);
-
+  // Load form data when editing starts
   useEffect(() => {
     if (editingId) {
       setSelectedAnnotationIds(new Set());
-      const annotation = annotations.find(a => a.id === editingId);
-      if (annotation) {
-        setTitle(annotation.title);
-        setDescription(annotation.description);
+      const pointer = pointers.find(p => p.id === editingId);
+      if (pointer) {
+        setTitle(pointer.title);
+        setDescription(pointer.description);
+      } else {
+        // New pointer with empty title/description
+        setTitle('');
+        setDescription('');
       }
     }
-  }, [editingId, annotations]);
+  }, [editingId, pointers]);
 
   // Reset selection when file changes
   useEffect(() => {
@@ -111,29 +103,30 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   };
 
   const handleSubmit = () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !editingId) return;
     
-    if (editingId) {
-      onEditAnnotation(editingId, title, description);
-      setEditingId(null);
-    } else {
-      onAddAnnotation(title, description);
-      setIsAdding(false);
-    }
-    setTitle('');
-    setDescription('');
-  };
-
-  const handleCancel = () => {
-    setIsAdding(false);
+    onPointerUpdate(editingId, { title, description });
     setEditingId(null);
     setTitle('');
     setDescription('');
   };
 
-  const handleAnnotationClick = (e: React.MouseEvent, id: string) => {
+  const handleCancel = () => {
+    // If canceling a new pointer (empty title), delete it
+    if (editingId) {
+      const pointer = pointers.find(p => p.id === editingId);
+      if (pointer && !pointer.title.trim()) {
+        onPointerDelete(editingId);
+      }
+    }
+    setEditingId(null);
+    setTitle('');
+    setDescription('');
+  };
+
+  const handlePointerClick = (e: React.MouseEvent, id: string) => {
     if (e.ctrlKey || e.metaKey) {
-      const newSelected = new Set(selectedAnnotationIds);
+      const newSelected = new Set<string>(selectedAnnotationIds);
       if (newSelected.has(id)) {
         newSelected.delete(id);
       } else {
@@ -142,20 +135,16 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
       setSelectedAnnotationIds(newSelected);
     } else {
       if (selectedAnnotationIds.has(id)) {
-        // If clicking an already-selected annotation, deselect it (keep others if any, or empty if it was the only one)
-        // Note: Requirement says "deselect it", which implies removing from selection.
-        const newSelected = new Set(selectedAnnotationIds);
+        // If clicking an already-selected pointer, deselect it
+        const newSelected = new Set<string>(selectedAnnotationIds);
         newSelected.delete(id);
         setSelectedAnnotationIds(newSelected);
       } else {
-        // If clicking an unselected annotation, clear others and select only that one
-        setSelectedAnnotationIds(new Set([id]));
+        // If clicking an unselected pointer, clear others and select only that one
+        setSelectedAnnotationIds(new Set<string>([id]));
       }
     }
   };
-
-  // If no file is selected, show empty state or return null depending on design preference
-  // Here we show a placeholder message in the header if collapsed, or empty state in body
   
   return (
     <div 
@@ -179,7 +168,7 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
       >
         <div className="flex items-center gap-2">
           {isCollapsed ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
-          <span className="text-sm font-semibold text-gray-200">Annotations</span>
+          <span className="text-sm font-semibold text-gray-200">Context Pointers</span>
           {selectedFileName && (
             <>
               <span className="text-gray-600">|</span>
@@ -188,23 +177,8 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
             </>
           )}
           <span className="bg-gray-800 text-gray-400 text-[10px] px-1.5 py-0.5 rounded-full ml-2">
-            {annotations.length}
+            {pointers.length}
           </span>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {!isCollapsed && selectedFileName && !isAdding && !editingId && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsAdding(true);
-              }}
-              className="flex items-center gap-1.5 px-2 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs rounded transition-colors"
-            >
-              <PlusIcon className="w-3 h-3" />
-              <span>Add Annotation</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -214,16 +188,16 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
           {!selectedFileName ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-500">
               <DocumentIcon className="w-12 h-12 mb-3 opacity-20" />
-              <p className="text-sm">Select a file to view or add annotations</p>
+              <p className="text-sm">Select a file to view context pointers</p>
             </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
               
-              {/* Add/Edit Form */}
-              {(isAdding || editingId) && (
+              {/* Edit Form - shown when editing a pointer */}
+              {editingId && (
                 <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-4 animate-fadeIn">
                   <h3 className="text-sm font-medium text-gray-300 mb-3">
-                    {editingId ? 'Edit Annotation' : 'New Annotation'}
+                    {pointers.find(p => p.id === editingId)?.title ? 'Edit Context Pointer' : 'New Context Pointer'}
                   </h3>
                   <div className="space-y-3">
                     <div>
@@ -261,60 +235,60 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                           !title.trim() ? 'opacity-50 cursor-not-allowed' : ''
                         }`}
                       >
-                        {editingId ? 'Save Changes' : 'Create Annotation'}
+                        Save
                       </button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Annotations List */}
-              {annotations.length === 0 && !isAdding ? (
+              {/* Pointers List */}
+              {pointers.length === 0 && !editingId ? (
                 <div className="text-center py-10">
-                  <p className="text-sm text-gray-500">No annotations yet for this file.</p>
-                  <button
-                    onClick={() => setIsAdding(true)}
-                    className="mt-2 text-cyan-500 hover:text-cyan-400 text-xs font-medium"
-                  >
-                    Create your first annotation
-                  </button>
+                  <RectangleIcon className="w-12 h-12 mx-auto mb-3 text-gray-600 opacity-50" />
+                  <p className="text-sm text-gray-500">No context pointers yet.</p>
+                  <p className="mt-1 text-xs text-gray-600">Use the rectangle tool to draw a region on the PDF.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {annotations.map((annotation) => (
+                  {pointers.map((pointer) => (
                     <div 
-                      key={annotation.id}
-                      onClick={(e) => handleAnnotationClick(e, annotation.id)}
+                      key={pointer.id}
+                      onClick={(e) => handlePointerClick(e, pointer.id)}
                       className={`group relative bg-gray-800 border rounded-lg p-3 transition-all cursor-pointer ${
-                        editingId === annotation.id ? 'hidden' : ''
+                        editingId === pointer.id ? 'hidden' : ''
                       } ${
-                        selectedAnnotationIds.has(annotation.id)
+                        selectedAnnotationIds.has(pointer.id)
                           ? 'border-cyan-500'
                           : 'border-gray-700/50 hover:border-gray-600'
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-semibold text-gray-200 mb-1">{annotation.title}</h4>
-                          <p className="text-xs text-gray-400 whitespace-pre-wrap">{annotation.description}</p>
+                          <div className="flex items-center gap-2 mb-1">
+                            {pointer.snapshotDataUrl && (
+                              <img 
+                                src={pointer.snapshotDataUrl} 
+                                alt="Snapshot" 
+                                className="w-10 h-10 object-cover rounded border border-gray-700"
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <h4 className="text-sm font-semibold text-gray-200">
+                                {pointer.title || <span className="text-gray-500 italic">Untitled</span>}
+                              </h4>
+                              <span className="text-[10px] text-gray-500">Page {pointer.pageNumber}</span>
+                            </div>
+                          </div>
+                          {pointer.description && (
+                            <p className="text-xs text-gray-400 whitespace-pre-wrap mt-1">{pointer.description}</p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {onAddRectangleToAnnotation && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onAddRectangleToAnnotation(annotation.id);
-                              }}
-                              className="p-1.5 hover:bg-gray-700 text-gray-400 hover:text-cyan-400 rounded transition-colors"
-                              title="Add Rectangle"
-                            >
-                              <PlusIcon className="w-3.5 h-3.5" />
-                            </button>
-                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setEditingId(annotation.id);
+                              setEditingId(pointer.id);
                             }}
                             className="p-1.5 hover:bg-gray-700 text-gray-400 hover:text-cyan-400 rounded transition-colors"
                             title="Edit"
@@ -324,7 +298,7 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              onDeleteAnnotation(annotation.id);
+                              onPointerDelete(pointer.id);
                             }}
                             className="p-1.5 hover:bg-gray-700 text-gray-400 hover:text-red-400 rounded transition-colors"
                             title="Delete"
@@ -346,4 +320,3 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
 };
 
 export default AnnotationsPanel;
-
