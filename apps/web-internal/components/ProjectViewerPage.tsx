@@ -1975,6 +1975,25 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
     }, [currentFileId, editingPointerId]);
 
+    // Handler for adding current sheet to context
+    const handleAddToContext = useCallback(() => {
+        if (!currentFileId || !selectedCenterFile) return;
+        
+        setSheetContexts(prev => {
+            const existingSheet = prev[currentFileId] || createEmptySheetContext(currentFileId, selectedCenterFile.name);
+            return {
+                ...prev,
+                [currentFileId]: {
+                    ...existingSheet,
+                    addedToContext: true,
+                },
+            };
+        });
+    }, [currentFileId, selectedCenterFile]);
+
+    // Check if current sheet is added to context
+    const isCurrentSheetAddedToContext = currentSheet?.addedToContext ?? false;
+
     // Compute pointer counts by node ID for the file tree
     const pointerCountByFileId = useMemo(() => {
         // Count pointers by their fileId from sheetContexts
@@ -2094,6 +2113,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onEditingPointerIdChange={setEditingPointerId}
                             selectedAnnotationIds={selectedAnnotationIds}
                             onSelectedAnnotationIdsChange={setSelectedAnnotationIds}
+                            isAddedToContext={isCurrentSheetAddedToContext}
+                            onAddToContext={handleAddToContext}
                         />
                     </div>
                 );

@@ -26,6 +26,8 @@ export interface SheetContext {
   fileName: string;
   pointers: ContextPointer[];
 
+  addedToContext: boolean;
+
   markdownContent: string | null;
   markdownGeneratedAt: string | null;
   generationStatus: 'idle' | 'generating' | 'complete' | 'error';
@@ -42,6 +44,7 @@ export function createEmptySheetContext(fileId: string, fileName: string): Sheet
     fileId,
     fileName,
     pointers: [],
+    addedToContext: false,
     markdownContent: null,
     markdownGeneratedAt: null,
     generationStatus: 'idle',

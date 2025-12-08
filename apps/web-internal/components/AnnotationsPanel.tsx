@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ContextPointer } from '../types/context';
-import { ChevronDownIcon, ChevronUpIcon, PencilIcon, CloseIcon, DocumentIcon, RectangleIcon } from './Icons';
+import { ChevronDownIcon, ChevronUpIcon, PencilIcon, CloseIcon, DocumentIcon, RectangleIcon, PlusIcon, CheckIcon } from './Icons';
 
 interface AnnotationsPanelProps {
   selectedFileName: string | null;
@@ -16,6 +16,9 @@ interface AnnotationsPanelProps {
   onEditingPointerIdChange?: (id: string | null) => void;
   selectedAnnotationIds?: Set<string>;
   onSelectedAnnotationIdsChange?: (ids: Set<string>) => void;
+  // Add to context feature
+  isAddedToContext?: boolean;
+  onAddToContext?: () => void;
 }
 
 const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
@@ -31,6 +34,8 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   onEditingPointerIdChange,
   selectedAnnotationIds: controlledSelectedAnnotationIds,
   onSelectedAnnotationIdsChange,
+  isAddedToContext,
+  onAddToContext,
 }) => {
   const [isResizing, setIsResizing] = useState(false);
   const [internalEditingId, setInternalEditingId] = useState<string | null>(null);
@@ -180,6 +185,36 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
             {pointers.length}
           </span>
         </div>
+        {/* Add to Context Button */}
+        {selectedFileName && pointers.length > 0 && onAddToContext && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isAddedToContext) {
+                onAddToContext();
+              }
+            }}
+            disabled={isAddedToContext}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+              isAddedToContext
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 cursor-default'
+                : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+            }`}
+            title={isAddedToContext ? 'Already added to context' : 'Add pointers to context'}
+          >
+            {isAddedToContext ? (
+              <>
+                <CheckIcon className="w-3 h-3" />
+                Added to Context
+              </>
+            ) : (
+              <>
+                <PlusIcon className="w-3 h-3" />
+                Add to Context
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Content Area */}

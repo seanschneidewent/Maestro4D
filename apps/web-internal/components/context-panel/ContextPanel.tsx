@@ -89,13 +89,16 @@ const TreeView: React.FC<{
     selectedSheetId: string | null;
     onSelectSheet: (sheetId: string | null) => void;
 }> = ({ sheets, selectedSheetId, onSelectSheet }) => {
-    if (sheets.length === 0) {
+    // Filter to only show sheets that have been explicitly added to context
+    const addedSheets = sheets.filter(sheet => sheet.addedToContext);
+    
+    if (addedSheets.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-gray-500 p-6">
                 <DocumentIcon className="w-12 h-12 mb-3 opacity-20" />
-                <p className="text-sm text-center">No sheets with context pointers yet.</p>
+                <p className="text-sm text-center">No context files yet.</p>
                 <p className="text-xs text-gray-600 mt-1 text-center">
-                    Add context pointers to PDF sheets to generate markdown.
+                    Add context pointers to PDF sheets and click "Add to Context".
                 </p>
             </div>
         );
@@ -103,7 +106,7 @@ const TreeView: React.FC<{
 
     return (
         <div className="p-3 space-y-1">
-            {sheets.map((sheet) => (
+            {addedSheets.map((sheet) => (
                 <SheetItem
                     key={sheet.fileId}
                     sheet={sheet}
@@ -113,6 +116,38 @@ const TreeView: React.FC<{
                     )}
                 />
             ))}
+        </div>
+    );
+};
+
+// Pointer snapshot card component for preview
+const PointerSnapshotCard: React.FC<{
+    pointer: SheetContext['pointers'][0];
+}> = ({ pointer }) => {
+    return (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+            {pointer.snapshotDataUrl && (
+                <div className="bg-gray-900">
+                    <img 
+                        src={pointer.snapshotDataUrl} 
+                        alt={pointer.title || 'Context snapshot'} 
+                        className="w-full h-auto object-contain max-h-48"
+                    />
+                </div>
+            )}
+            <div className="p-3">
+                <div className="flex items-center gap-2 mb-1">
+                    <h4 className="text-sm font-medium text-gray-200">
+                        {pointer.title || <span className="text-gray-500 italic">Untitled</span>}
+                    </h4>
+                    <span className="text-[10px] text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">
+                        Page {pointer.pageNumber}
+                    </span>
+                </div>
+                {pointer.description && (
+                    <p className="text-xs text-gray-400 whitespace-pre-wrap">{pointer.description}</p>
+                )}
+            </div>
         </div>
     );
 };
@@ -155,41 +190,60 @@ const PreviewView: React.FC<{
         );
     }
 
-    if (!selectedSheet.markdownContent) {
+    // Show markdown if generated
+    if (selectedSheet.markdownContent) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-gray-500 p-6">
-                <DocumentIcon className="w-12 h-12 mb-3 opacity-20" />
-                <p className="text-sm text-center">No markdown generated yet.</p>
-                <p className="text-xs text-gray-600 mt-1 text-center">
-                    Add context pointers and click Generate.
-                </p>
+            <div className="h-full overflow-auto p-4 custom-scrollbar">
+                <div className="prose prose-invert prose-sm max-w-none
+                    prose-headings:text-gray-200 prose-headings:font-semibold
+                    prose-h1:text-lg prose-h1:border-b prose-h1:border-gray-700 prose-h1:pb-2 prose-h1:mb-4
+                    prose-h2:text-base prose-h2:text-cyan-400
+                    prose-h3:text-sm prose-h3:text-gray-300
+                    prose-p:text-gray-400 prose-p:leading-relaxed
+                    prose-a:text-cyan-400 prose-a:no-underline hover:prose-a:underline
+                    prose-strong:text-gray-300
+                    prose-code:text-cyan-300 prose-code:bg-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
+                    prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-700
+                    prose-ul:text-gray-400 prose-ol:text-gray-400
+                    prose-li:marker:text-gray-600
+                    prose-blockquote:border-l-cyan-500 prose-blockquote:text-gray-400
+                    prose-table:text-sm
+                    prose-th:text-gray-300 prose-th:bg-gray-800 prose-th:px-3 prose-th:py-2
+                    prose-td:text-gray-400 prose-td:px-3 prose-td:py-2 prose-td:border-gray-700
+                ">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {selectedSheet.markdownContent}
+                    </ReactMarkdown>
+                </div>
             </div>
         );
     }
 
-    return (
-        <div className="h-full overflow-auto p-4 custom-scrollbar">
-            <div className="prose prose-invert prose-sm max-w-none
-                prose-headings:text-gray-200 prose-headings:font-semibold
-                prose-h1:text-lg prose-h1:border-b prose-h1:border-gray-700 prose-h1:pb-2 prose-h1:mb-4
-                prose-h2:text-base prose-h2:text-cyan-400
-                prose-h3:text-sm prose-h3:text-gray-300
-                prose-p:text-gray-400 prose-p:leading-relaxed
-                prose-a:text-cyan-400 prose-a:no-underline hover:prose-a:underline
-                prose-strong:text-gray-300
-                prose-code:text-cyan-300 prose-code:bg-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
-                prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-700
-                prose-ul:text-gray-400 prose-ol:text-gray-400
-                prose-li:marker:text-gray-600
-                prose-blockquote:border-l-cyan-500 prose-blockquote:text-gray-400
-                prose-table:text-sm
-                prose-th:text-gray-300 prose-th:bg-gray-800 prose-th:px-3 prose-th:py-2
-                prose-td:text-gray-400 prose-td:px-3 prose-td:py-2 prose-td:border-gray-700
-            ">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {selectedSheet.markdownContent}
-                </ReactMarkdown>
+    // Show pointer snapshots if no markdown but has pointers
+    if (selectedSheet.pointers.length > 0) {
+        return (
+            <div className="h-full overflow-auto p-4 custom-scrollbar">
+                <div className="mb-4">
+                    <h3 className="text-sm font-medium text-gray-300 mb-1">{selectedSheet.fileName}</h3>
+                    <p className="text-xs text-gray-500">{selectedSheet.pointers.length} context pointer{selectedSheet.pointers.length !== 1 ? 's' : ''}</p>
+                </div>
+                <div className="space-y-3">
+                    {selectedSheet.pointers.map((pointer) => (
+                        <PointerSnapshotCard key={pointer.id} pointer={pointer} />
+                    ))}
+                </div>
             </div>
+        );
+    }
+
+    // No markdown and no pointers
+    return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-500 p-6">
+            <DocumentIcon className="w-12 h-12 mb-3 opacity-20" />
+            <p className="text-sm text-center">No content yet.</p>
+            <p className="text-xs text-gray-600 mt-1 text-center">
+                Add context pointers to this sheet.
+            </p>
         </div>
     );
 };
@@ -214,9 +268,9 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
     // Get selected sheet
     const selectedSheet = selectedSheetId ? sheetContexts[selectedSheetId] : null;
 
-    // Count stats
+    // Count stats - only for sheets added to context
     const stats = useMemo(() => {
-        const sheets = Object.values(sheetContexts);
+        const sheets = Object.values(sheetContexts).filter(s => s.addedToContext);
         return {
             total: sheets.length,
             withPointers: sheets.filter(s => s.pointers.length > 0).length,
