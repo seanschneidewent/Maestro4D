@@ -580,25 +580,44 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     return { xNorm: Math.max(0, Math.min(1, x)), yNorm: Math.max(0, Math.min(1, y)) };
   };
 
-  // Capture snapshot of PDF page region as PNG data URL
+  // Capture snapshot of PDF page region as PNG data URL at 150 DPI (print quality)
   // Storage format: PNG data URLs (image/png) are stored inline for quick embedding
   // These are then packaged into the generated PDF (application/pdf) for download/sharing
   const capturePageSnapshot = useCallback(async (pageNumber: number, xNorm: number, yNorm: number, wNorm: number, hNorm: number): Promise<string | null> => {
+    if (!pdfUrl) return null;
+
     try {
-      // Get the page wrapper to find the PDF canvas
-      const pageWrapper = pageWrapperRefs.current[pageNumber];
-      if (!pageWrapper) return null;
+      // Load the PDF document directly using PDF.js for high-resolution rendering
+      const loadingTask = pdfjs.getDocument(pdfUrl);
+      const pdf = await loadingTask.promise;
+      
+      // Get the specific page
+      const page = await pdf.getPage(pageNumber);
+      
+      // Calculate scale for 150 DPI (PDF uses 72 points per inch)
+      // 150 DPI / 72 PPI = ~2.08 scale factor
+      const DPI_SCALE = 150 / 72;
+      
+      // Get the viewport at 150 DPI scale
+      const viewport = page.getViewport({ scale: DPI_SCALE });
+      
+      // Create an offscreen canvas at the high-resolution dimensions
+      const fullCanvas = document.createElement('canvas');
+      fullCanvas.width = viewport.width;
+      fullCanvas.height = viewport.height;
+      const fullCtx = fullCanvas.getContext('2d');
+      if (!fullCtx) return null;
 
-      // Find the PDF.js canvas element (react-pdf renders it)
-      const pdfCanvas = pageWrapper.querySelector('canvas') as HTMLCanvasElement;
-      if (!pdfCanvas) return null;
+      // Render the page to the offscreen canvas at high resolution
+      await page.render({
+        canvasContext: fullCtx,
+        viewport: viewport,
+      }).promise;
 
-      // Use the actual PDF canvas dimensions (which are at the current rendered scale)
-      // Normalized coordinates are relative (0-1), so multiply by actual canvas size
-      const canvasWidth = pdfCanvas.width;
-      const canvasHeight = pdfCanvas.height;
-
-      // Calculate pixel coordinates from normalized coordinates using actual canvas size
+      // Calculate pixel coordinates from normalized coordinates using high-res dimensions
+      const canvasWidth = fullCanvas.width;
+      const canvasHeight = fullCanvas.height;
+      
       const x = Math.floor(xNorm * canvasWidth);
       const y = Math.floor(yNorm * canvasHeight);
       const w = Math.floor(wNorm * canvasWidth);
@@ -619,9 +638,9 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const tempCtx = tempCanvas.getContext('2d');
       if (!tempCtx) return null;
 
-      // Draw the region from PDF canvas to temp canvas
+      // Draw the region from high-res canvas to temp canvas
       tempCtx.drawImage(
-        pdfCanvas,
+        fullCanvas,
         clampedX, clampedY, clampedW, clampedH,
         0, 0, clampedW, clampedH
       );
@@ -632,7 +651,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       console.error('Error capturing page snapshot:', error);
       return null;
     }
-  }, []);
+  }, [pdfUrl]);
 
   // Calculate the nearest border midpoint for arrow attachment
   const getClosestBorderAnchor = useCallback((

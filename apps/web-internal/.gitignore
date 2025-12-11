@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# n8n data directories
+n8n_data/watch_inbox/*
+n8n_data/processed/*
+!n8n_data/**/.gitkeep
