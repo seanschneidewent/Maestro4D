@@ -1,0 +1,609 @@
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 0, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 5'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 2'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 1'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 3'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 4'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 11'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 7'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 18'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 6'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 22'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 10'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 17'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 19'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 16'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 9'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 13'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 12'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 20'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 14'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 23'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 8'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 15'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 21'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 24'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 25'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 28'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 26'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 29'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 27'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 30'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 31'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 32'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 33'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 34'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 35'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 36'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 38'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 37'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 39'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 40'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 41'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 43'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 47'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 42'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 45'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 46'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 44'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 48'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 49'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 50'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 51'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 52'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 53'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 54'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 56'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 55'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 57'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 58'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 59'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 60'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 62'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 61'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 64'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 65'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 63'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 66'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 67'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 68'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 69'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 70'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 71'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 72'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 73'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 74'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 75'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 76'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 78'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 77'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 80'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 79'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 81'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 85'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 84'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 83'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 82'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 86'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 87'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 88'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 89'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 90'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 91'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 92'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 93'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 94'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 95'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 97'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 96'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 100'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 98'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 99'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 103'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 104'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 101'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 102'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 105'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 106'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 107'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 109'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 111'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 108'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 110'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 112'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 113'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 114'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 115'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 116'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 118'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 117'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 119'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 120'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 121'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 122'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 123'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 125'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 124'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 126'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 127'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 128'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 130'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 131'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 129'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 132'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 136'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 133'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 134'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 135'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 138'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 139'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 137'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 140'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 141'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 143'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 142'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 148'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 146'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 145'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 144'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 147'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 149'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 150'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 151'000'000, num points: 1'000'000
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 153'000'000, num points: 262'403
+INFO(chunker_countsort_laszip.cpp:176): counting Feeding Ministry Building 1.las, first point: 152'000'000, num points: 1'000'000
+INFO(indexer.cpp:1656): start indexing chunk r04
+filesize: 4'297'644
+min: -158.94399999999999, -231.77600000000001, -19.558
+max: -52.795999999999992, -125.62800000000001, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r02
+filesize: 1'690'551
+min: -265.09199999999998, -125.62800000000001, -19.558
+max: -158.94399999999999, -19.480000000000018, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r00
+filesize: 576'504
+min: -265.09199999999998, -231.77600000000001, -19.558
+max: -158.94399999999999, -125.62800000000001, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r060
+filesize: 1'668'708
+min: -158.94399999999999, -125.62800000000001, -19.558
+max: -105.86999999999999, -72.554000000000016, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r064
+filesize: 9'297'099
+min: -105.86999999999999, -125.62800000000001, -19.558
+max: -52.795999999999992, -72.554000000000016, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r0660
+filesize: 91'515'609
+min: -105.86999999999999, -72.554000000000016, -19.558
+max: -79.332999999999998, -46.017000000000017, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r06621
+filesize: 92'817'630
+min: -105.86999999999999, -46.017000000000017, -6.2895000000000003
+max: -92.601499999999987, -32.748500000000021, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r06622
+filesize: 1'080
+min: -105.86999999999999, -32.748500000000021, -19.558
+max: -92.601499999999987, -19.480000000000018, -6.2895000000000003
+INFO(indexer.cpp:1656): start indexing chunk r06623
+filesize: 65'906'703
+min: -105.86999999999999, -32.748500000000021, -6.2895000000000003
+max: -92.601499999999987, -19.480000000000018, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r06624
+filesize: 189
+min: -92.601499999999987, -46.017000000000017, -19.558
+max: -79.332999999999998, -32.748500000000021, -6.2895000000000003
+INFO(indexer.cpp:1656): start indexing chunk r06625
+filesize: 60'606'225
+min: -92.601499999999987, -46.017000000000017, -6.2895000000000003
+max: -79.332999999999998, -32.748500000000021, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r06622
+INFO(indexer.cpp:1656): start indexing chunk r06627
+filesize: 88'172'523
+min: -92.601499999999987, -32.748500000000021, -6.2895000000000003
+max: -79.332999999999998, -19.480000000000018, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r06624
+INFO(indexer.cpp:1656): start indexing chunk r0667
+filesize: 22'725'684
+min: -79.332999999999998, -46.017000000000017, 6.9789999999999992
+max: -52.795999999999992, -19.480000000000018, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r0663
+filesize: 155'371'635
+min: -105.86999999999999, -46.017000000000017, 6.9789999999999992
+max: -79.332999999999998, -19.480000000000018, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r0666
+filesize: 125'074'854
+min: -79.332999999999998, -46.017000000000017, -19.558
+max: -52.795999999999992, -19.480000000000018, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r0664
+filesize: 23'412'861
+min: -79.332999999999998, -72.554000000000016, -19.558
+max: -52.795999999999992, -46.017000000000017, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r0665
+filesize: 1'544'643
+min: -79.332999999999998, -72.554000000000016, 6.9789999999999992
+max: -52.795999999999992, -46.017000000000017, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r067
+filesize: 15'876
+min: -105.86999999999999, -72.554000000000016, 33.515999999999998
+max: -52.795999999999992, -19.480000000000018, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r20
+filesize: 7'668'810
+min: -265.09199999999998, -19.480000000000018, -19.558
+max: -158.94399999999999, 86.667999999999978, 86.590000000000003
+INFO(indexer.cpp:1699): finished indexing chunk r067
+INFO(indexer.cpp:1656): start indexing chunk r2400
+filesize: 25'396'227
+min: -158.94399999999999, -19.480000000000018, -19.558
+max: -132.40699999999998, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r22
+filesize: 197'883
+min: -265.09199999999998, 86.667999999999978, -19.558
+max: -158.94399999999999, 192.81599999999997, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r2401
+filesize: 6'054'075
+min: -158.94399999999999, -19.480000000000018, 6.9789999999999992
+max: -132.40699999999998, 7.0569999999999808, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r2402
+filesize: 35'011'494
+min: -158.94399999999999, 7.0569999999999808, -19.558
+max: -132.40699999999998, 33.59399999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r22
+INFO(indexer.cpp:1656): start indexing chunk r24043
+filesize: 36'494'307
+min: -132.40699999999998, -6.2115000000000187, -6.2895000000000003
+max: -119.13849999999999, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r24044
+filesize: 3'402
+min: -119.13849999999999, -19.480000000000018, -19.558
+max: -105.86999999999999, -6.2115000000000187, -6.2895000000000003
+INFO(indexer.cpp:1656): start indexing chunk r24046
+filesize: 270
+min: -119.13849999999999, -6.2115000000000187, -19.558
+max: -105.86999999999999, 7.0569999999999808, -6.2895000000000003
+INFO(indexer.cpp:1656): start indexing chunk r24041
+filesize: 3'107'727
+min: -132.40699999999998, -19.480000000000018, -6.2895000000000003
+max: -119.13849999999999, -6.2115000000000187, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r2403
+filesize: 15'627'735
+min: -158.94399999999999, 7.0569999999999808, 6.9789999999999992
+max: -132.40699999999998, 33.59399999999998, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r24045
+filesize: 119'935'998
+min: -119.13849999999999, -19.480000000000018, -6.2895000000000003
+max: -105.86999999999999, -6.2115000000000187, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r24044
+INFO(indexer.cpp:1699): finished indexing chunk r24046
+INFO(indexer.cpp:1656): start indexing chunk r240470
+filesize: 56'512'323
+min: -119.13849999999999, -6.2115000000000187, -6.2895000000000003
+max: -112.50424999999998, 0.42274999999998109, 0.34474999999999945
+INFO(indexer.cpp:1656): start indexing chunk r240471
+filesize: 80'095'581
+min: -119.13849999999999, -6.2115000000000187, 0.34474999999999945
+max: -112.50424999999998, 0.42274999999998109, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r240472
+filesize: 23'933'529
+min: -119.13849999999999, 0.42274999999998109, -6.2895000000000003
+max: -112.50424999999998, 7.0569999999999808, 0.34474999999999945
+INFO(indexer.cpp:1656): start indexing chunk r240473
+filesize: 27'755'325
+min: -119.13849999999999, 0.42274999999998109, 0.34474999999999945
+max: -112.50424999999998, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r062
+filesize: 172'419'138
+min: -158.94399999999999, -72.554000000000016, -19.558
+max: -105.86999999999999, -19.480000000000018, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r00
+INFO(indexer.cpp:1656): start indexing chunk r240474
+filesize: 63'230'598
+min: -112.50424999999998, -6.2115000000000187, -6.2895000000000003
+max: -105.86999999999999, 0.42274999999998109, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r060
+INFO(indexer.cpp:1699): finished indexing chunk r0665
+INFO(indexer.cpp:1656): start indexing chunk r240475
+filesize: 73'611'774
+min: -112.50424999999998, -6.2115000000000187, 0.34474999999999945
+max: -105.86999999999999, 0.42274999999998109, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r240476
+filesize: 51'856'740
+min: -112.50424999999998, 0.42274999999998109, -6.2895000000000003
+max: -105.86999999999999, 7.0569999999999808, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r02
+INFO(indexer.cpp:1656): start indexing chunk r240477
+filesize: 59'940'567
+min: -112.50424999999998, 0.42274999999998109, 0.34474999999999945
+max: -105.86999999999999, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r04
+INFO(indexer.cpp:1656): start indexing chunk r2405
+filesize: 145'268'262
+min: -132.40699999999998, -19.480000000000018, 6.9789999999999992
+max: -105.86999999999999, 7.0569999999999808, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r24041
+INFO(indexer.cpp:1699): finished indexing chunk r064
+INFO(indexer.cpp:1656): start indexing chunk r2406
+filesize: 118'031'418
+min: -132.40699999999998, 7.0569999999999808, -19.558
+max: -105.86999999999999, 33.59399999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r2401
+INFO(indexer.cpp:1699): finished indexing chunk r20
+INFO(indexer.cpp:1656): start indexing chunk r2407
+filesize: 47'352'195
+min: -132.40699999999998, 7.0569999999999808, 6.9789999999999992
+max: -105.86999999999999, 33.59399999999998, 33.515999999999998
+INFO(indexer.cpp:1656): start indexing chunk r241
+filesize: 635'526
+min: -158.94399999999999, -19.480000000000018, 33.515999999999998
+max: -105.86999999999999, 33.59399999999998, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r242
+filesize: 8'444'682
+min: -158.94399999999999, 33.59399999999998, -19.558
+max: -105.86999999999999, 86.667999999999978, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r241
+INFO(indexer.cpp:1656): start indexing chunk r243
+filesize: 176'121
+min: -158.94399999999999, 33.59399999999998, 33.515999999999998
+max: -105.86999999999999, 86.667999999999978, 86.590000000000003
+INFO(indexer.cpp:1699): finished indexing chunk r243
+INFO(indexer.cpp:1656): start indexing chunk r24400
+filesize: 216
+min: -105.86999999999999, -19.480000000000018, -19.558
+max: -92.601499999999987, -6.2115000000000187, -6.2895000000000003
+INFO(indexer.cpp:1699): finished indexing chunk r24400
+INFO(indexer.cpp:1656): start indexing chunk r244010
+filesize: 31'696'650
+min: -105.86999999999999, -19.480000000000018, -6.2895000000000003
+max: -99.235749999999996, -12.845750000000018, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r242
+INFO(indexer.cpp:1656): start indexing chunk r244011
+filesize: 1'716'282
+min: -105.86999999999999, -19.480000000000018, 0.34474999999999945
+max: -99.235749999999996, -12.845750000000018, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244011
+INFO(indexer.cpp:1656): start indexing chunk r244012
+filesize: 85'650'129
+min: -105.86999999999999, -12.845750000000018, -6.2895000000000003
+max: -99.235749999999996, -6.2115000000000187, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r0664
+INFO(indexer.cpp:1656): start indexing chunk r244013
+filesize: 83'987'712
+min: -105.86999999999999, -12.845750000000018, 0.34474999999999945
+max: -99.235749999999996, -6.2115000000000187, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r2403
+INFO(indexer.cpp:1656): start indexing chunk r244014
+filesize: 29'517'210
+min: -99.235749999999996, -19.480000000000018, -6.2895000000000003
+max: -92.601499999999987, -12.845750000000018, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r2400
+INFO(indexer.cpp:1656): start indexing chunk r244015
+filesize: 5'670'864
+min: -99.235749999999996, -19.480000000000018, 0.34474999999999945
+max: -92.601499999999987, -12.845750000000018, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r0667
+INFO(indexer.cpp:1656): start indexing chunk r244016
+filesize: 61'387'929
+min: -99.235749999999996, -12.845750000000018, -6.2895000000000003
+max: -92.601499999999987, -6.2115000000000187, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r240472
+INFO(indexer.cpp:1656): start indexing chunk r244017
+filesize: 70'468'623
+min: -99.235749999999996, -12.845750000000018, 0.34474999999999945
+max: -92.601499999999987, -6.2115000000000187, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244015
+INFO(indexer.cpp:1656): start indexing chunk r244030
+filesize: 139'542'804
+min: -105.86999999999999, -6.2115000000000187, -6.2895000000000003
+max: -99.235749999999996, 0.42274999999998109, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r2402
+INFO(indexer.cpp:1699): finished indexing chunk r24043
+INFO(indexer.cpp:1656): start indexing chunk r244031
+filesize: 188'554'014
+min: -105.86999999999999, -6.2115000000000187, 0.34474999999999945
+max: -99.235749999999996, 0.42274999999998109, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r244032
+filesize: 47'565'495
+min: -105.86999999999999, 0.42274999999998109, -6.2895000000000003
+max: -99.235749999999996, 7.0569999999999808, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r240473
+INFO(indexer.cpp:1656): start indexing chunk r244033
+filesize: 93'217'257
+min: -105.86999999999999, 0.42274999999998109, 0.34474999999999945
+max: -99.235749999999996, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244010
+INFO(indexer.cpp:1656): start indexing chunk r244034
+filesize: 118'847'034
+min: -99.235749999999996, -6.2115000000000187, -6.2895000000000003
+max: -92.601499999999987, 0.42274999999998109, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r06623
+INFO(indexer.cpp:1656): start indexing chunk r244035
+filesize: 133'778'007
+min: -99.235749999999996, -6.2115000000000187, 0.34474999999999945
+max: -92.601499999999987, 0.42274999999998109, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244014
+INFO(indexer.cpp:1656): start indexing chunk r244036
+filesize: 70'832'097
+min: -99.235749999999996, 0.42274999999998109, -6.2895000000000003
+max: -92.601499999999987, 7.0569999999999808, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r06625
+INFO(indexer.cpp:1656): start indexing chunk r244037
+filesize: 67'524'138
+min: -99.235749999999996, 0.42274999999998109, 0.34474999999999945
+max: -92.601499999999987, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r240476
+INFO(indexer.cpp:1656): start indexing chunk r24405
+filesize: 68'223'708
+min: -92.601499999999987, -19.480000000000018, -6.2895000000000003
+max: -79.332999999999998, -6.2115000000000187, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r2407
+INFO(indexer.cpp:1656): start indexing chunk r24407
+filesize: 102'923'487
+min: -92.601499999999987, -6.2115000000000187, -6.2895000000000003
+max: -79.332999999999998, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r240470
+INFO(indexer.cpp:1656): start indexing chunk r24410
+filesize: 167'740'929
+min: -105.86999999999999, -19.480000000000018, 6.9789999999999992
+max: -92.601499999999987, -6.2115000000000187, 20.247499999999999
+INFO(indexer.cpp:1699): finished indexing chunk r240477
+INFO(indexer.cpp:1656): start indexing chunk r24412
+filesize: 173'052'801
+min: -105.86999999999999, -6.2115000000000187, 6.9789999999999992
+max: -92.601499999999987, 7.0569999999999808, 20.247499999999999
+INFO(indexer.cpp:1699): finished indexing chunk r240471
+INFO(indexer.cpp:1656): start indexing chunk r24413
+filesize: 934'119
+min: -105.86999999999999, -6.2115000000000187, 20.247499999999999
+max: -92.601499999999987, 7.0569999999999808, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r24413
+INFO(indexer.cpp:1656): start indexing chunk r24414
+filesize: 18'785'115
+min: -92.601499999999987, -19.480000000000018, 6.9789999999999992
+max: -79.332999999999998, -6.2115000000000187, 20.247499999999999
+INFO(indexer.cpp:1699): finished indexing chunk r244032
+INFO(indexer.cpp:1656): start indexing chunk r24416
+filesize: 2'360'367
+min: -92.601499999999987, -6.2115000000000187, 6.9789999999999992
+max: -79.332999999999998, 7.0569999999999808, 20.247499999999999
+INFO(indexer.cpp:1699): finished indexing chunk r240475
+INFO(indexer.cpp:1699): finished indexing chunk r244016
+INFO(indexer.cpp:1699): finished indexing chunk r24416
+INFO(indexer.cpp:1656): start indexing chunk r24417
+filesize: 1'026
+min: -92.601499999999987, -6.2115000000000187, 20.247499999999999
+max: -79.332999999999998, 7.0569999999999808, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r24417
+INFO(indexer.cpp:1656): start indexing chunk r244210
+filesize: 35'749'053
+min: -105.86999999999999, 7.0569999999999808, -6.2895000000000003
+max: -99.235749999999996, 13.691249999999981, 0.34474999999999945
+INFO(indexer.cpp:1656): start indexing chunk r244211
+filesize: 70'030'413
+min: -105.86999999999999, 7.0569999999999808, 0.34474999999999945
+max: -99.235749999999996, 13.691249999999981, 6.9789999999999992
+INFO(indexer.cpp:1656): start indexing chunk r244212
+filesize: 11'953'035
+min: -105.86999999999999, 13.691249999999981, -6.2895000000000003
+max: -99.235749999999996, 20.32549999999998, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r0660
+INFO(indexer.cpp:1656): start indexing chunk r244213
+filesize: 11'523'708
+min: -105.86999999999999, 13.691249999999981, 0.34474999999999945
+max: -99.235749999999996, 20.32549999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244212
+INFO(indexer.cpp:1656): start indexing chunk r244214
+filesize: 41'513'310
+min: -99.235749999999996, 7.0569999999999808, -6.2895000000000003
+max: -92.601499999999987, 13.691249999999981, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r240474
+INFO(indexer.cpp:1656): start indexing chunk r244215
+filesize: 42'762'087
+min: -99.235749999999996, 7.0569999999999808, 0.34474999999999945
+max: -92.601499999999987, 13.691249999999981, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r24414
+INFO(indexer.cpp:1656): start indexing chunk r244216
+filesize: 17'285'697
+min: -99.235749999999996, 13.691249999999981, -6.2895000000000003
+max: -92.601499999999987, 20.32549999999998, 0.34474999999999945
+INFO(indexer.cpp:1699): finished indexing chunk r244213
+INFO(indexer.cpp:1656): start indexing chunk r244217
+filesize: 8'712'036
+min: -99.235749999999996, 13.691249999999981, 0.34474999999999945
+max: -92.601499999999987, 20.32549999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r06627
+INFO(indexer.cpp:1656): start indexing chunk r24423
+filesize: 9'507'942
+min: -105.86999999999999, 20.32549999999998, -6.2895000000000003
+max: -92.601499999999987, 33.59399999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244012
+INFO(indexer.cpp:1656): start indexing chunk r24425
+filesize: 52'820'586
+min: -92.601499999999987, 7.0569999999999808, -6.2895000000000003
+max: -79.332999999999998, 20.32549999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r06621
+INFO(indexer.cpp:1656): start indexing chunk r24427
+filesize: 37'306'980
+min: -92.601499999999987, 20.32549999999998, -6.2895000000000003
+max: -79.332999999999998, 33.59399999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244217
+INFO(indexer.cpp:1656): start indexing chunk r2443
+filesize: 30'709'962
+min: -105.86999999999999, 7.0569999999999808, 6.9789999999999992
+max: -79.332999999999998, 33.59399999999998, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r24423
+INFO(indexer.cpp:1656): start indexing chunk r2444
+filesize: 7'748'352
+min: -79.332999999999998, -19.480000000000018, -19.558
+max: -52.795999999999992, 7.0569999999999808, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244210
+INFO(indexer.cpp:1656): start indexing chunk r2445
+filesize: 3'471'957
+min: -79.332999999999998, -19.480000000000018, 6.9789999999999992
+max: -52.795999999999992, 7.0569999999999808, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r2445
+INFO(indexer.cpp:1656): start indexing chunk r2446
+filesize: 27'500'256
+min: -79.332999999999998, 7.0569999999999808, -19.558
+max: -52.795999999999992, 33.59399999999998, 6.9789999999999992
+INFO(indexer.cpp:1699): finished indexing chunk r244216
+INFO(indexer.cpp:1656): start indexing chunk r2447
+filesize: 3'074'760
+min: -79.332999999999998, 7.0569999999999808, 6.9789999999999992
+max: -52.795999999999992, 33.59399999999998, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r244013
+INFO(indexer.cpp:1656): start indexing chunk r245
+filesize: 2'388'150
+min: -105.86999999999999, -19.480000000000018, 33.515999999999998
+max: -52.795999999999992, 33.59399999999998, 86.590000000000003
+INFO(indexer.cpp:1699): finished indexing chunk r2447
+INFO(indexer.cpp:1656): start indexing chunk r246
+filesize: 10'887'993
+min: -105.86999999999999, 33.59399999999998, -19.558
+max: -52.795999999999992, 86.667999999999978, 33.515999999999998
+INFO(indexer.cpp:1699): finished indexing chunk r0666
+INFO(indexer.cpp:1699): finished indexing chunk r244017
+INFO(indexer.cpp:1656): start indexing chunk r26
+filesize: 1'183'356
+min: -158.94399999999999, 86.667999999999978, -19.558
+max: -52.795999999999992, 192.81599999999997, 86.590000000000003
+INFO(indexer.cpp:1656): start indexing chunk r247
+filesize: 18'576
+min: -105.86999999999999, 33.59399999999998, 33.515999999999998
+max: -52.795999999999992, 86.667999999999978, 86.590000000000003
+INFO(indexer.cpp:1699): finished indexing chunk r2444
+INFO(indexer.cpp:1699): finished indexing chunk r247
+INFO(indexer.cpp:1699): finished indexing chunk r245
+INFO(indexer.cpp:1656): start indexing chunk r4
+filesize: 20'142'729
+min: -52.795999999999992, -231.77600000000001, -19.558
+max: 159.5, -19.480000000000018, 192.738
+INFO(indexer.cpp:1656): start indexing chunk r6
+filesize: 4'358'205
+min: -52.795999999999992, -19.480000000000018, -19.558
+max: 159.5, 192.81599999999997, 192.738
+INFO(indexer.cpp:1699): finished indexing chunk r26
+INFO(indexer.cpp:1699): finished indexing chunk r6
+INFO(indexer.cpp:1699): finished indexing chunk r246
+INFO(indexer.cpp:1699): finished indexing chunk r244037
+INFO(indexer.cpp:1699): finished indexing chunk r0663
+INFO(indexer.cpp:1699): finished indexing chunk r2406
+INFO(indexer.cpp:1699): finished indexing chunk r244036
+INFO(indexer.cpp:1699): finished indexing chunk r244033
+INFO(indexer.cpp:1699): finished indexing chunk r2446
+INFO(indexer.cpp:1699): finished indexing chunk r244214
+INFO(indexer.cpp:1699): finished indexing chunk r4
+INFO(indexer.cpp:1699): finished indexing chunk r2405
+INFO(indexer.cpp:1699): finished indexing chunk r24045
+INFO(indexer.cpp:1699): finished indexing chunk r244215
+INFO(indexer.cpp:1699): finished indexing chunk r2443
+INFO(indexer.cpp:1699): finished indexing chunk r24427
+INFO(indexer.cpp:1699): finished indexing chunk r24405
+INFO(indexer.cpp:1699): finished indexing chunk r244211
+INFO(indexer.cpp:1699): finished indexing chunk r244034
+INFO(indexer.cpp:1699): finished indexing chunk r244035
+INFO(indexer.cpp:1699): finished indexing chunk r24425
+INFO(indexer.cpp:1699): finished indexing chunk r24407
+INFO(indexer.cpp:1699): finished indexing chunk r244030
+INFO(indexer.cpp:1699): finished indexing chunk r062
+INFO(indexer.cpp:1699): finished indexing chunk r24410
+INFO(indexer.cpp:1699): finished indexing chunk r244031
+INFO(indexer.cpp:1699): finished indexing chunk r24412

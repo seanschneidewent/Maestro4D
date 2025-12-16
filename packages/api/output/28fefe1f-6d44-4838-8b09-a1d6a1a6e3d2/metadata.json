@@ -1,0 +1,88 @@
+{
+  "version": "2.0",
+  "name": "Feeding Ministry Building 1",
+  "description": "Mock Potree conversion of Feeding Ministry Building 1.las",
+  "points": 1000000,
+  "projection": "",
+  "hierarchy": {
+    "firstChunkSize": 1000,
+    "stepSize": 4,
+    "depth": 5
+  },
+  "offset": [
+    0,
+    0,
+    0
+  ],
+  "scale": [
+    0.001,
+    0.001,
+    0.001
+  ],
+  "spacing": 1.0,
+  "boundingBox": {
+    "min": [
+      -50,
+      -50,
+      -10
+    ],
+    "max": [
+      50,
+      50,
+      30
+    ]
+  },
+  "encoding": "DEFAULT",
+  "attributes": [
+    {
+      "name": "position",
+      "description": "",
+      "size": 12,
+      "numElements": 3,
+      "elementSize": 4,
+      "type": "int32",
+      "min": [
+        -50,
+        -50,
+        -10
+      ],
+      "max": [
+        50,
+        50,
+        30
+      ]
+    },
+    {
+      "name": "rgb",
+      "description": "",
+      "size": 6,
+      "numElements": 3,
+      "elementSize": 2,
+      "type": "uint16",
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "max": [
+        65535,
+        65535,
+        65535
+      ]
+    },
+    {
+      "name": "intensity",
+      "description": "",
+      "size": 2,
+      "numElements": 1,
+      "elementSize": 2,
+      "type": "uint16",
+      "min": [
+        0
+      ],
+      "max": [
+        65535
+      ]
+    }
+  ]
+}

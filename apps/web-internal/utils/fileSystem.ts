@@ -89,10 +89,10 @@ export const buildTreeFromFiles = (files: File[]): FileSystemNode[] => {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
 
       if (isLast) {
-        // It's the file
+        // It's the file - use `part` (filename from path) not `file.name` (which may contain full path)
         const node: FileSystemNode = {
           id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: file.name,
+          name: part,
           type: 'file',
           path: currentPath,
           file: file,

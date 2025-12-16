@@ -4,6 +4,7 @@ import { Project, ScanData, Severity, InsightStatus, AgentType, AgentState, Seri
 import { MaestroLogo, PlusIcon, SearchIcon, FolderIcon, ChevronDownIcon, GridIcon, ListIcon, ArrowRightIcon, PencilIcon } from './components/Icons';
 import ProjectViewerPage from './components/ProjectViewerPage';
 import DashboardSidebar from './components/DashboardSidebar';
+import { fetchProjects, createProject, updateProject, ProjectResponse } from './utils/api';
 
 // --- DASHBOARD SUB-COMPONENTS ---
 
@@ -465,16 +466,58 @@ const App: React.FC = () => {
   const selectedProject = useMemo(() => projects.find(p => p.id === selectedProjectId), [projects, selectedProjectId]);
   const currentView = selectedProjectId ? 'viewer' : 'dashboard';
 
-  // Hydrate projects from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('maestro4d_projects');
-    if (saved) {
-      try {
-        setProjects(JSON.parse(saved));
-      } catch (e) {
-        // Ignore parse errors, start with empty projects
+  // Helper to convert backend ProjectResponse to frontend Project format
+  const projectResponseToProject = (p: ProjectResponse): Project => ({
+    id: p.id,
+    name: p.name,
+    status: p.status === 'active' ? 'Active' : 'Completed',
+    lastScan: {
+      type: 'As-Built Scan',
+      date: new Date(p.updatedAt).toISOString().split('T')[0],
+    },
+    lastScanTimeAgo: 'Recently',
+    imageUrl: p.imageUrl || undefined,
+    progress: p.progress,
+    issues: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
+    scans: [],
+    agentStates: {
+      market: {
+        chatHistory: [{ role: 'model', parts: [{ text: "I am the Market Intelligence Agent. I'm tracking live prices. Ask me about material trends, volatility, or for procurement advice, like 'Should I lock in steel prices now?'" }] }],
+        uploadedFiles: [],
+      },
+      spec: {
+        chatHistory: [{ role: 'model', parts: [{ text: "I am the Spec Search Agent. Please upload your project specifications, drawings, and contracts. I can then answer questions like, 'What are the fire rating requirements for the stairwell walls?'" }] }],
+        uploadedFiles: [],
       }
-    }
+    },
+  });
+
+  // Hydrate projects from backend API on mount, fallback to localStorage
+  useEffect(() => {
+    const loadProjects = async () => {
+      try {
+        // Try to fetch from backend
+        const backendProjects = await fetchProjects();
+        if (backendProjects.length > 0) {
+          setProjects(backendProjects.map(projectResponseToProject));
+          return;
+        }
+      } catch (error) {
+        console.warn('Failed to fetch projects from backend, falling back to localStorage:', error);
+      }
+      
+      // Fallback to localStorage
+      const saved = localStorage.getItem('maestro4d_projects');
+      if (saved) {
+        try {
+          setProjects(JSON.parse(saved));
+        } catch (e) {
+          // Ignore parse errors, start with empty projects
+        }
+      }
+    };
+    
+    loadProjects();
   }, []);
 
   // Persist projects to localStorage whenever they change
@@ -492,11 +535,26 @@ const App: React.FC = () => {
     setSelectedProjectId(null);
   }
 
-  const handleNewProject = () => {
+  const handleNewProject = async () => {
     const newProjectDate = new Date().toISOString().split('T')[0];
+    const projectName = `New Sample Project #${projects.length + 1}`;
+    
+    // Create project in backend first
+    let backendId: string | null = null;
+    try {
+      const created = await createProject({
+        name: projectName,
+        status: 'active',
+        progress: 0,
+      });
+      backendId = created.id;
+    } catch (error) {
+      console.warn('Failed to create project in backend, using local ID:', error);
+    }
+    
     const newProject: Project = {
-      id: `proj_${Date.now()}`,
-      name: `New Sample Project #${projects.length + 1}`,
+      id: backendId || `proj_${Date.now()}`,
+      name: projectName,
       status: 'Active',
       lastScan: {
         type: 'As-Built Scan',
@@ -570,28 +628,52 @@ const App: React.FC = () => {
     );
   };
 
-  const handleUpdateProjectName = (projectId: string, newName: string) => {
+  const handleUpdateProjectName = async (projectId: string, newName: string) => {
+    // Update locally first for instant UI feedback
     setProjects(prevProjects =>
       prevProjects.map(p =>
         p.id === projectId ? { ...p, name: newName } : p
       )
     );
+    
+    // Sync to backend
+    try {
+      await updateProject(projectId, { name: newName });
+    } catch (error) {
+      console.warn('Failed to update project name in backend:', error);
+    }
   };
 
-  const handleUpdateProjectStatus = (projectId: string, newStatus: 'Active' | 'Completed') => {
+  const handleUpdateProjectStatus = async (projectId: string, newStatus: 'Active' | 'Completed') => {
+    // Update locally first for instant UI feedback
     setProjects(prevProjects =>
       prevProjects.map(p =>
         p.id === projectId ? { ...p, status: newStatus } : p
       )
     );
+    
+    // Sync to backend
+    try {
+      await updateProject(projectId, { status: newStatus === 'Active' ? 'active' : 'completed' });
+    } catch (error) {
+      console.warn('Failed to update project status in backend:', error);
+    }
   };
   
-  const handleUpdateProjectImage = (projectId: string, imageUrl: string) => {
+  const handleUpdateProjectImage = async (projectId: string, imageUrl: string) => {
+    // Update locally first for instant UI feedback
     setProjects(prevProjects =>
       prevProjects.map(p =>
         p.id === projectId ? { ...p, imageUrl: imageUrl } : p
       )
     );
+    
+    // Sync to backend
+    try {
+      await updateProject(projectId, { imageUrl });
+    } catch (error) {
+      console.warn('Failed to update project image in backend:', error);
+    }
   };
 
   return (

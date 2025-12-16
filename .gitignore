@@ -33,3 +33,14 @@ Pods/
 # Build outputs
 dist/
 *.log
+
+# Uploaded user data
+apps/web-internal/backend/uploads/
+packages/api/uploads/
+packages/api/.data/
+apps/web-internal/backend/app/data/*.db
+
+# Point cloud output data
+**/octree.bin
+*.bin
+packages/api/output/

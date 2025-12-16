@@ -25,9 +25,20 @@ import {
     renameNode,
     sortNodes
 } from '../utils/fileSystem';
+import {
+    uploadProjectFile,
+    fetchProjectFiles,
+    downloadFile,
+    createPointer,
+    updatePointer as updatePointerApi,
+    deletePointer as deletePointerApi,
+    fetchFilePointers,
+    ProjectFileResponse,
+    ContextPointerResponse,
+} from '../utils/api';
 
 // --- FILE HELPERS ---
-const fileToSerializable = async (file: File, path?: string): Promise<SerializableFile> => {
+const fileToSerializable = async (file: File, path?: string, backendId?: string): Promise<SerializableFile> => {
     try {
         const id = await saveFileToDB(file, file.name, file.type);
         return {
@@ -35,7 +46,8 @@ const fileToSerializable = async (file: File, path?: string): Promise<Serializab
             type: file.type,
             size: file.size,
             storageId: id,
-            path: path
+            path: path,
+            backendId: backendId,
         };
     } catch (error) {
         console.error("Failed to save file to DB, falling back to base64", error);
@@ -47,7 +59,8 @@ const fileToSerializable = async (file: File, path?: string): Promise<Serializab
                 type: file.type,
                 size: file.size,
                 content: reader.result as string,
-                path: path
+                path: path,
+                backendId: backendId,
             });
             reader.onerror = error => reject(error);
         });
@@ -402,7 +415,7 @@ const DEFAULT_AGENT_STATES: Record<AgentType, AgentState> = {
 // Per-scan viewer state type
 interface ScanViewerState {
     // Kept for compatibility/reference, but derived from fileSystemTree in this implementation
-    centerViewerFiles: Array<{ name: string; url: string; file: File }>;
+    centerViewerFiles: Array<{ name: string; url: string; file: File; backendId?: string }>;
 
     // New tree structure state
     fileSystemTree: FileSystemNode[];
@@ -449,7 +462,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [isListDataActive, setIsListDataActive] = useState(false);
 
     // Project-level Project Master state (persists across all scans)
-    const [projectMasterFiles, setProjectMasterFiles] = useState<Array<{ name: string; url: string; file: File }>>([]);
+    const [projectMasterFiles, setProjectMasterFiles] = useState<Array<{ name: string; url: string; file: File; backendId?: string; storageId?: string }>>([]);
     const [projectMasterTree, setProjectMasterTree] = useState<FileSystemNode[]>([]);
     const projectMasterUrlsRef = useRef<string[]>([]);
 
@@ -689,6 +702,59 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
         // Async load project-level Project Master files
         const loadProjectMasterFiles = async () => {
+            // First try to load from backend
+            try {
+                const backendFiles = await fetchProjectFiles(project.id);
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/0e9fcf86-bb9b-4a9a-8f51-b2cb9c55e0e3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectViewerPage:loadProjectMasterFiles',message:'Fetched backend files',data:{count:backendFiles.length,files:backendFiles.slice(0,5).map((f: ProjectFileResponse)=>({id:f.id,name:f.name}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+                // #endregion
+                if (backendFiles.length > 0) {
+                    // Load files from backend
+                    const hydratedFiles = await Promise.all(backendFiles.map(async (backendFile: ProjectFileResponse) => {
+                        try {
+                            // Download the file blob from backend
+                            const blob = await downloadFile(backendFile.id);
+                            const file = new File([blob], backendFile.name, { 
+                                type: blob.type || `application/${backendFile.fileType || 'octet-stream'}` 
+                            });
+                            const url = URL.createObjectURL(file);
+                            projectMasterUrlsRef.current.push(url);
+                            
+                            // Also cache in IndexedDB for faster subsequent loads
+                            const storageId = await saveFileToDB(file, file.name, file.type);
+                            
+                            return { 
+                                name: file.name, 
+                                url, 
+                                file, 
+                                backendId: backendFile.id,
+                                storageId 
+                            };
+                        } catch (downloadError) {
+                            // #region agent log
+                            fetch('http://127.0.0.1:7242/ingest/0e9fcf86-bb9b-4a9a-8f51-b2cb9c55e0e3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectViewerPage:loadProjectMasterFiles:downloadError',message:'Download failed',data:{fileId:backendFile.id,name:backendFile.name,error:String(downloadError)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+                            // #endregion
+                            console.warn(`Failed to download file ${backendFile.name}:`, downloadError);
+                            return null;
+                        }
+                    }));
+                    
+                    const validFiles = hydratedFiles.filter((f): f is NonNullable<typeof f> => f !== null);
+                    
+                    if (validFiles.length > 0) {
+                        const filesOnly = validFiles.map(f => f.file);
+                        const tree = buildTreeFromFiles(filesOnly);
+                        
+                        setProjectMasterFiles(validFiles);
+                        setProjectMasterTree(tree);
+                        return; // Successfully loaded from backend
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to fetch files from backend, falling back to local storage:', error);
+            }
+            
+            // Fallback to local storage (project.projectMasterFiles)
             if (!project.projectMasterFiles || project.projectMasterFiles.length === 0) return;
 
             try {
@@ -705,7 +771,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         });
                     }
 
-                    return { name: file.name, url, file };
+                    return { name: file.name, url, file, backendId: sFile.backendId };
                 }));
 
                 const filesOnly = hydratedFiles.map(f => f.file);
@@ -1147,10 +1213,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 );
                 
                 if (!existingPMFile) {
-                    // PM file should exist, but if not, create URL
+                    // PM file should exist, but if not, create URL (fallback case)
                     const url = URL.createObjectURL(node.file);
                     projectMasterUrlsRef.current.push(url);
-                    setProjectMasterFiles(prev => [...prev, { name: node.name, url, file: node.file! }]);
+                    setProjectMasterFiles(prev => [...prev, { name: node.name, url, file: node.file!, backendId: node.backendId }]);
                 }
             } else {
                 const existingIndex = updatedFiles.findIndex(f =>
@@ -1533,7 +1599,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     }, [currentScanDate, updateCurrentScanViewerState, updatePersistenceFromTree]);
 
     // Project-level Project Master upload handler - saves to project level, not per-scan
-    const handleUploadProjectMaster = useCallback((files: File[]) => {
+    const handleUploadProjectMaster = useCallback(async (files: File[]) => {
         if (!files || files.length === 0) return;
 
         // Filter out invalid/system files
@@ -1547,12 +1613,45 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
         if (validFiles.length === 0) return;
 
-        // Create file data with URLs
-        const newFileData = validFiles.map(file => {
+        // Upload files to backend in parallel and collect backend IDs
+        const backendUploads = await Promise.allSettled(
+            validFiles.map(async (file) => {
+                try {
+                    const response = await uploadProjectFile(project.id, file);
+                    return { file, backendId: response.id };
+                } catch (error) {
+                    console.warn(`Failed to upload ${file.name} to backend:`, error);
+                    return { file, backendId: undefined };
+                }
+            })
+        );
+
+        // Create a map of file name+size to backend ID
+        const backendIdMap = new Map<string, string>();
+        backendUploads.forEach(result => {
+            if (result.status === 'fulfilled' && result.value.backendId) {
+                const key = `${result.value.file.name}-${result.value.file.size}`;
+                backendIdMap.set(key, result.value.backendId);
+            }
+        });
+
+        // Create file data with URLs, backend IDs, and save to IndexedDB for local caching
+        const newFileData = await Promise.all(validFiles.map(async file => {
             const url = URL.createObjectURL(file);
             projectMasterUrlsRef.current.push(url);
-            return { name: file.name, url, file };
-        });
+            const key = `${file.name}-${file.size}`;
+            const backendId = backendIdMap.get(key);
+            
+            // Save to IndexedDB for local caching
+            let storageId: string | undefined;
+            try {
+                storageId = await saveFileToDB(file, file.name, file.type);
+            } catch (error) {
+                console.warn(`Failed to save ${file.name} to IndexedDB:`, error);
+            }
+            
+            return { name: file.name, url, file, backendId, storageId };
+        }));
 
         // Build tree structure from files
         const newTreeNodes = buildTreeFromFiles(validFiles);
@@ -1566,7 +1665,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             });
             return mergedTree;
         });
-    }, []);
+    }, [project.id]);
 
     const handleUploadModel = useCallback((files: File[]) => {
         handleUploadToScanFolder(files, ['Models']);
@@ -1608,6 +1707,28 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
             let glbUrl: string | undefined;
 
+            // Upload files to backend in parallel and collect backend IDs
+            const backendUploads = await Promise.allSettled(
+                validFiles.map(async (file) => {
+                    try {
+                        const response = await uploadProjectFile(project.id, file);
+                        return { file, backendId: response.id };
+                    } catch (error) {
+                        console.warn(`Failed to upload ${file.name} to backend:`, error);
+                        return { file, backendId: undefined };
+                    }
+                })
+            );
+
+            // Create a map of file name+size to backend ID
+            const backendIdMap = new Map<string, string>();
+            backendUploads.forEach(result => {
+                if (result.status === 'fulfilled' && result.value.backendId) {
+                    const key = `${result.value.file.name}-${result.value.file.size}`;
+                    backendIdMap.set(key, result.value.backendId);
+                }
+            });
+
             const newFileData = validFiles.map(file => {
                 if (!file || !(file instanceof File)) {
                     throw new Error('Invalid file object');
@@ -1619,7 +1740,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     glbUrl = url;
                 }
 
-                return { name: file.name, url, file };
+                const key = `${file.name}-${file.size}`;
+                const backendId = backendIdMap.get(key);
+
+                return { name: file.name, url, file, backendId };
             });
 
             if (glbUrl) {
@@ -1682,7 +1806,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             console.error('Error adding files:', error);
             // Don't crash the app, just log the error
         }
-    }, [currentScanDate, updateCurrentScanViewerState]);
+    }, [currentScanDate, updateCurrentScanViewerState, project.id]);
 
     const handleCenterViewerDeleteFile = useCallback((index: number) => {
         // Legacy delete handler - mapped to node delete if possible
@@ -1890,6 +2014,8 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [editingPointerId, setEditingPointerId] = useState<string | null>(null);
 
     // Get current sheet context for selected file
+    // Use backendId for API operations, but storageId/name for local state key
+    const currentFileBackendId = (selectedCenterFile as { backendId?: string } | undefined)?.backendId;
     const currentFileId = selectedCenterFile?.storageId || selectedCenterFile?.name;
     const currentSheet = useMemo(() => {
         if (!currentFileId || !selectedCenterFile) return null;
@@ -1899,8 +2025,58 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     // Get pointers for current sheet
     const currentPointers = currentSheet?.pointers || [];
 
+    // Load pointers from backend when file with backendId is opened
+    const loadedPointersRef = useRef<Set<string>>(new Set());
+    useEffect(() => {
+        if (!currentFileBackendId || !currentFileId || !selectedCenterFile) return;
+        
+        // Skip if we've already loaded pointers for this file
+        if (loadedPointersRef.current.has(currentFileBackendId)) return;
+        
+        const loadPointers = async () => {
+            try {
+                const backendPointers = await fetchFilePointers(currentFileBackendId);
+                if (backendPointers.length > 0) {
+                    // Convert backend pointers to frontend format
+                    const pointers: ContextPointer[] = backendPointers.map((bp: ContextPointerResponse) => ({
+                        id: bp.id,
+                        pageNumber: bp.pageNumber,
+                        bounds: bp.bounds,
+                        style: bp.style,
+                        title: bp.title,
+                        description: bp.description || '',
+                        snapshotDataUrl: bp.snapshotDataUrl,
+                        createdAt: bp.createdAt,
+                    }));
+                    
+                    setSheetContexts(prev => {
+                        const existingSheet = prev[currentFileId] || createEmptySheetContext(currentFileId, selectedCenterFile.name);
+                        // Merge backend pointers with any local ones (deduping by ID)
+                        const existingIds = new Set(existingSheet.pointers.map(p => p.id));
+                        const newPointers = pointers.filter(p => !existingIds.has(p.id));
+                        
+                        return {
+                            ...prev,
+                            [currentFileId]: {
+                                ...existingSheet,
+                                pointers: [...existingSheet.pointers, ...newPointers],
+                            },
+                        };
+                    });
+                    
+                    // Mark as loaded
+                    loadedPointersRef.current.add(currentFileBackendId);
+                }
+            } catch (error) {
+                console.warn('Failed to load pointers from backend:', error);
+            }
+        };
+        
+        loadPointers();
+    }, [currentFileBackendId, currentFileId, selectedCenterFile]);
+
     // Handler for creating a new pointer (called from PdfViewer when rectangle is drawn)
-    const handlePointerCreate = useCallback((partial: Omit<ContextPointer, 'title' | 'description'>) => {
+    const handlePointerCreate = useCallback(async (partial: Omit<ContextPointer, 'title' | 'description'>) => {
         if (!currentFileId || !selectedCenterFile) return;
         
         const pointer: ContextPointer = {
@@ -1909,6 +2085,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             description: '',
         };
         
+        // Update local state immediately for instant UI feedback
         setSheetContexts(prev => {
             const existingSheet = prev[currentFileId] || createEmptySheetContext(currentFileId, selectedCenterFile.name);
             return {
@@ -1923,12 +2100,49 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Auto-open edit form for the new pointer
         setEditingPointerId(pointer.id);
         setIsAnnotationsPanelCollapsed(false);
-    }, [currentFileId, selectedCenterFile]);
+        
+        // Sync to backend if we have a backend file ID
+        if (currentFileBackendId) {
+            try {
+                const backendPointer = await createPointer({
+                    fileId: currentFileBackendId,
+                    pageNumber: pointer.pageNumber,
+                    bounds: pointer.bounds,
+                    style: pointer.style,
+                    title: pointer.title,
+                    description: pointer.description,
+                    snapshotDataUrl: pointer.snapshotDataUrl,
+                });
+                
+                // Update local state with backend-generated ID
+                setSheetContexts(prev => {
+                    const existingSheet = prev[currentFileId];
+                    if (!existingSheet) return prev;
+                    
+                    return {
+                        ...prev,
+                        [currentFileId]: {
+                            ...existingSheet,
+                            pointers: existingSheet.pointers.map(p =>
+                                p.id === pointer.id ? { ...p, id: backendPointer.id } : p
+                            ),
+                        },
+                    };
+                });
+                
+                // Update editing pointer ID to the backend ID
+                setEditingPointerId(backendPointer.id);
+            } catch (error) {
+                console.warn('Failed to create pointer in backend:', error);
+            }
+        }
+    }, [currentFileId, selectedCenterFile, currentFileBackendId]);
 
     // Handler for updating pointer title/description
-    const handlePointerUpdate = useCallback((id: string, updates: { title: string; description: string }) => {
+    const handlePointerUpdate = useCallback(async (id: string, updates: { title: string; description: string }) => {
         if (!currentFileId) return;
         
+        // Update local state immediately
         setSheetContexts(prev => {
             const existingSheet = prev[currentFileId];
             if (!existingSheet) return prev;
@@ -1943,12 +2157,22 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 },
             };
         });
-    }, [currentFileId]);
+        
+        // Sync to backend (pointer ID from backend if available)
+        if (currentFileBackendId) {
+            try {
+                await updatePointerApi(id, updates);
+            } catch (error) {
+                console.warn('Failed to update pointer in backend:', error);
+            }
+        }
+    }, [currentFileId, currentFileBackendId]);
 
     // Handler for deleting a pointer
-    const handlePointerDelete = useCallback((id: string) => {
+    const handlePointerDelete = useCallback(async (id: string) => {
         if (!currentFileId) return;
         
+        // Update local state immediately
         setSheetContexts(prev => {
             const existingSheet = prev[currentFileId];
             if (!existingSheet) return prev;
@@ -1961,6 +2185,15 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 },
             };
         });
+        
+        // Sync to backend
+        if (currentFileBackendId) {
+            try {
+                await deletePointerApi(id);
+            } catch (error) {
+                console.warn('Failed to delete pointer in backend:', error);
+            }
+        }
         
         // Clear editing state if this pointer was being edited
         if (editingPointerId === id) {
@@ -2015,6 +2248,9 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             const match = centerFiles.find(f =>
                 f.file === node.file ||
                 (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
+            ) || projectMasterFiles.find(f =>
+                f.file === node.file ||
+                (f.name === node.name && f.file.size === node.file?.size && f.file.type === node.file?.type)
             );
 
             // Determine the fileId used for pointers
@@ -2026,7 +2262,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
 
         return countsByNodeId;
-    }, [sheetContexts, currentScanViewerState.fileSystemTree, currentScanViewerState.centerViewerFiles, projectMasterTree]);
+    }, [sheetContexts, currentScanViewerState.fileSystemTree, currentScanViewerState.centerViewerFiles, projectMasterTree, projectMasterFiles]);
     
     // Compute visible rectangle IDs based on selected pointers
     const visibleRectangleIds = useMemo(() => {

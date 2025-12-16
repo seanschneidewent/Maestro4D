@@ -86,6 +86,7 @@ export interface SerializableFile {
   content?: string; // base64 data URL (legacy)
   storageId?: string; // IndexedDB ID
   path?: string; // Reconstruct folder structure
+  backendId?: string; // Backend file ID for API operations
 }
 
 export interface AgentState {
@@ -106,6 +107,7 @@ export interface FileSystemNode {
   children?: FileSystemNode[]; // Only for folders
   parentId?: string;
   expanded?: boolean; // UI state
+  backendId?: string; // Backend file ID for API operations
 }
 
 export interface Project {
