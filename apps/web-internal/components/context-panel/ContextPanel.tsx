@@ -1,13 +1,17 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { SheetContext } from '../../types/context';
 import { ProcessedBatch, ProcessedPointer, ProcessedBatchSummary } from '../../types/n8n';
-import { useN8NExport, useProcessedBatches } from './hooks';
+import { useN8NExport, useProcessedBatches, useProcessingStatus, useProjectContext, PointerSummaryBounds, FileSummary, useAIProcessing, stripBase64Prefix } from './hooks';
+import { StreamingProcessedView } from './StreamingProcessedView';
+import { GlobalTreeView } from './GlobalTreeView';
+import { GlobalPreviewView } from './GlobalPreviewView';
 import { 
     DocumentIcon, 
     ChevronLeftIcon, 
-    ChevronRightIcon, 
+    ChevronRightIcon,
+    ChevronDownIcon,
     HollowCircleIcon, 
     FilledCircleIcon, 
     SpinnerIcon, 
@@ -22,10 +26,26 @@ import {
     ArrowLeftIcon,
     CheckIcon,
     PencilIcon,
-    CloseIcon
+    CloseIcon,
+    FolderIcon,
+    PlusIcon
 } from '../Icons';
+import { 
+    commitBatch, 
+    BatchCommitRequest, 
+    fetchContextPreview, 
+    ContextPreviewResponse, 
+    commitContext, 
+    ContextCommitResponse,
+    fetchProjectCommitPreview,
+    ProjectCommitPreviewResponse,
+    commitProjectContext,
+    getPointerCropImageUrl,
+    uncommitProjectPointers,
+    deleteAllProjectPointers
+} from '../../utils/api';
 
-type ViewMode = 'context' | 'processed';
+type ViewMode = 'global' | 'context' | 'processed';
 
 interface ContextPanelProps {
     sheetContexts: Record<string, SheetContext>;
@@ -35,6 +55,13 @@ interface ContextPanelProps {
     onToggleCollapse: () => void;
     width: number;
     onWidthChange: (width: number) => void;
+    projectId: string;
+    /** ID of currently selected plan/PDF for processing status polling */
+    selectedPlanId?: string | null;
+    /** Called when a pointer is double-clicked to navigate to source file/page */
+    onPointerNavigate?: (fileId: string, pageNumber: number, pointerId: string, bounds?: PointerSummaryBounds) => void;
+    /** Called when user clicks "Add to Context" in Global tab to copy all files to File context */
+    onAddGlobalToContext?: (files: FileSummary[]) => void;
 }
 
 // Status indicator component
@@ -51,7 +78,7 @@ const StatusIndicator: React.FC<{ sheet: SheetContext }> = ({ sheet }) => {
     }
 
     if (generationStatus === 'complete') {
-        return <FilledCircleIcon className="h-3 w-3 text-cyan-400" />;
+        return <CheckIcon className="h-3.5 w-3.5 text-green-400" />;
     }
 
     // idle state
@@ -540,7 +567,8 @@ const BatchDetailView: React.FC<{
     onCommit: () => void;
     onDiscard: () => void;
     isDiscarding: boolean;
-}> = ({ batch, onBack, onCommit, onDiscard, isDiscarding }) => {
+    isCommitting?: boolean;
+}> = ({ batch, onBack, onCommit, onDiscard, isDiscarding, isCommitting = false }) => {
     const totalPointers = batch.sheets.reduce((sum, s) => sum + s.pointers.length, 0);
     
     return (
@@ -572,10 +600,24 @@ const BatchDetailView: React.FC<{
                     </button>
                     <button
                         onClick={onCommit}
-                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 text-white rounded transition-colors"
+                        disabled={isCommitting}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 text-xs text-white rounded transition-colors ${
+                            isCommitting 
+                                ? 'bg-cyan-700 cursor-not-allowed' 
+                                : 'bg-cyan-600 hover:bg-cyan-500'
+                        }`}
                     >
-                        <DatabaseIcon className="w-3.5 h-3.5" />
-                        Commit to DB
+                        {isCommitting ? (
+                            <>
+                                <SpinnerIcon className="w-3.5 h-3.5" />
+                                Committing...
+                            </>
+                        ) : (
+                            <>
+                                <DatabaseIcon className="w-3.5 h-3.5" />
+                                Commit to DB
+                            </>
+                        )}
                     </button>
                 </div>
             </div>
@@ -608,7 +650,7 @@ const BatchDetailView: React.FC<{
 };
 
 // Processed batches list view
-const ProcessedBatchesView: React.FC = () => {
+const ProcessedBatchesView: React.FC<{ projectId: string }> = ({ projectId }) => {
     const {
         batches,
         isLoading,
@@ -622,6 +664,8 @@ const ProcessedBatchesView: React.FC = () => {
     } = useProcessedBatches();
     
     const [isDiscarding, setIsDiscarding] = useState(false);
+    const [isCommitting, setIsCommitting] = useState(false);
+    const [commitResult, setCommitResult] = useState<{ success: boolean; message: string } | null>(null);
 
     useEffect(() => {
         fetchBatches();
@@ -641,22 +685,89 @@ const ProcessedBatchesView: React.FC = () => {
         setIsDiscarding(false);
     };
 
-    const handleCommit = () => {
-        // Placeholder for database commit functionality
-        console.log('Committing batch to database:', selectedBatch?.batchId);
-        alert('Database commit functionality will be implemented here.\nThis will integrate with the existing sql.js database.');
+    const handleCommit = async () => {
+        if (!selectedBatch) return;
+        
+        setIsCommitting(true);
+        setCommitResult(null);
+        
+        try {
+            // Build the commit request with full batch data
+            const request: BatchCommitRequest = {
+                batchId: selectedBatch.batchId,
+                projectId: projectId,
+                processedAt: selectedBatch.processedAt,
+                sheets: selectedBatch.sheets.map(sheet => ({
+                    sheetId: sheet.sheetId,
+                    fileName: sheet.fileName,
+                    pointers: sheet.pointers.map(pointer => ({
+                        id: pointer.id,
+                        originalMetadata: {
+                            title: pointer.originalMetadata.title,
+                            description: pointer.originalMetadata.description,
+                            pageNumber: pointer.originalMetadata.pageNumber,
+                        },
+                        aiAnalysis: {
+                            technicalDescription: pointer.aiAnalysis.technicalDescription,
+                            identifiedElements: pointer.aiAnalysis.identifiedElements,
+                            tradeCategory: pointer.aiAnalysis.tradeCategory,
+                            measurements: pointer.aiAnalysis.measurements,
+                            issues: pointer.aiAnalysis.issues,
+                            recommendations: pointer.aiAnalysis.recommendations,
+                        },
+                    })),
+                })),
+            };
+            
+            const result = await commitBatch(request);
+            setCommitResult({
+                success: true,
+                message: `Successfully committed ${result.pointersCreated} context pointers to database.`
+            });
+            // Refresh batches list and clear selection after successful commit
+            await fetchBatches();
+            clearSelectedBatch();
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Failed to commit batch';
+            setCommitResult({
+                success: false,
+                message: errorMessage
+            });
+        } finally {
+            setIsCommitting(false);
+            // Clear result message after 5 seconds
+            setTimeout(() => setCommitResult(null), 5000);
+        }
     };
 
     // Show batch detail if selected
     if (selectedBatch) {
         return (
-            <BatchDetailView
-                batch={selectedBatch}
-                onBack={clearSelectedBatch}
-                onCommit={handleCommit}
-                onDiscard={handleDiscard}
-                isDiscarding={isDiscarding}
-            />
+            <>
+                {/* Commit Result Toast */}
+                {commitResult && (
+                    <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
+                        commitResult.success 
+                            ? 'bg-green-500/90 text-white' 
+                            : 'bg-red-500/90 text-white'
+                    }`}>
+                        {commitResult.success ? (
+                            <CheckIcon className="w-5 h-5" />
+                        ) : (
+                            <ExclamationCircleIcon className="w-5 h-5" />
+                        )}
+                        <span className="text-sm">{commitResult.message}</span>
+                    </div>
+                )}
+                <BatchDetailView
+                    batch={selectedBatch}
+                    onBack={clearSelectedBatch}
+                    onCommit={handleCommit}
+                    onDiscard={handleDiscard}
+                    isDiscarding={isDiscarding}
+                    isCommitting={isCommitting}
+                />
+            </>
         );
     }
 
@@ -756,12 +867,93 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
     onToggleCollapse,
     width,
     onWidthChange,
+    projectId,
+    selectedPlanId,
+    onPointerNavigate,
+    onAddGlobalToContext,
 }) => {
     const [isResizing, setIsResizing] = useState(false);
-    const [viewMode, setViewMode] = useState<ViewMode>('context');
+    const [viewMode, setViewMode] = useState<ViewMode>('global');
     const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [contextPreview, setContextPreview] = useState<ContextPreviewResponse | null>(null);
+    const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
+    const [commitSuccess, setCommitSuccess] = useState<{ pages: number; pointers: number } | null>(null);
+    
+    // Project-wide commit preview state
+    const [showProjectPreviewModal, setShowProjectPreviewModal] = useState(false);
+    const [projectPreview, setProjectPreview] = useState<ProjectCommitPreviewResponse | null>(null);
+    const [isLoadingProjectPreview, setIsLoadingProjectPreview] = useState(false);
+    const [projectPreviewError, setProjectPreviewError] = useState<string | null>(null);
+    
+    // Clear all annotations state
+    const [showClearAnnotationsConfirm, setShowClearAnnotationsConfirm] = useState(false);
+    const [isClearingAnnotations, setIsClearingAnnotations] = useState(false);
+    const [clearAnnotationsError, setClearAnnotationsError] = useState<string | null>(null);
     
     const { isExporting, error: exportError, exportBatch } = useN8NExport();
+    
+    // AI streaming processing hook
+    const {
+        isProcessing: aiIsProcessing,
+        progress: aiProgress,
+        processedPointers,
+        error: aiError,
+        processWithAI,
+        cancelProcessing,
+        reset: resetAIProcessing,
+        loadPersistedPointers,
+    } = useAIProcessing();
+    
+    // Global project context hook
+    const {
+        contextData,
+        isLoading: isLoadingContext,
+        error: contextError,
+        selection: globalSelection,
+        selectedFile,
+        selectedPage,
+        selectedPointer,
+        fetchContext,
+        selectFile,
+        selectPage,
+        selectPointer,
+        expandedFiles,
+        expandedPages,
+        toggleFileExpand,
+        togglePageExpand,
+        expandAll,
+        collapseAll,
+    } = useProjectContext(projectId);
+    
+    // Processing status polling
+    const { 
+        status: processingStatus, 
+        isProcessing, 
+        isComplete: processingComplete,
+        hasErrors: processingHasErrors,
+        startPolling,
+        refresh: refreshStatus
+    } = useProcessingStatus({ 
+        planId: selectedPlanId ?? null,
+        autoStart: false 
+    });
+    
+    // Start polling when a plan is selected and we're in context view
+    useEffect(() => {
+        if (selectedPlanId && viewMode === 'context') {
+            startPolling();
+        }
+    }, [selectedPlanId, viewMode, startPolling]);
+    
+    // Load persisted AI-processed pointers when switching to processed view
+    // This restores the view after browser refresh
+    useEffect(() => {
+        if (viewMode === 'processed' && processedPointers.length === 0 && projectId && !aiIsProcessing) {
+            loadPersistedPointers(projectId);
+        }
+    }, [viewMode, processedPointers.length, projectId, aiIsProcessing, loadPersistedPointers]);
 
     // Sort sheets alphabetically by fileName
     const sortedSheets = useMemo(() => {
@@ -783,7 +975,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         };
     }, [sheetContexts]);
 
-    // Handle export
+    // Handle export (legacy n8n)
     const handleExport = async () => {
         setExportSuccess(null);
         const result = await exportBatch(sheetContexts);
@@ -794,6 +986,150 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         }
     };
 
+    // Handle AI processing with streaming
+    const handleProcessWithAI = useCallback(async () => {
+        // #region agent log
+        const addedSheets = Object.values(sheetContexts).filter(sc => sc.addedToContext && sc.pointers.length > 0);
+        const firstPointer = addedSheets[0]?.pointers[0];
+        fetch('http://127.0.0.1:7243/ingest/6d569bee-72b8-4760-bb05-e3f164c6af6f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContextPanel.tsx:handleProcessWithAI:entry',message:'Handler called - checking snapshotDataUrl',data:{sheetCount:addedSheets.length,firstPointerTitle:firstPointer?.title,hasSnapshotDataUrl:!!firstPointer?.snapshotDataUrl,snapshotDataUrlLength:firstPointer?.snapshotDataUrl?.length || 0,snapshotDataUrlPrefix:firstPointer?.snapshotDataUrl?.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H8'})}).catch(()=>{});
+        // #endregion
+        const sheetsToProcess = Object.values(sheetContexts)
+            .filter(sc => sc.addedToContext && sc.pointers.length > 0)
+            .map(sc => ({
+                sheetId: sc.fileId,
+                fileName: sc.fileName,
+                pointers: sc.pointers.map(p => {
+                    const stripped = stripBase64Prefix(p.snapshotDataUrl || '');
+                    // #region agent log
+                    if (p === sc.pointers[0]) {
+                        fetch('http://127.0.0.1:7243/ingest/6d569bee-72b8-4760-bb05-e3f164c6af6f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContextPanel.tsx:handleProcessWithAI:pointerMap',message:'Pointer transformation',data:{pointerId:p.id,originalLength:p.snapshotDataUrl?.length||0,strippedLength:stripped.length,strippedPrefix:stripped.substring(0,30)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H8'})}).catch(()=>{});
+                    }
+                    // #endregion
+                    return {
+                        id: p.id,
+                        imageBase64: stripped,
+                        title: p.title || '',
+                        description: p.description || '',
+                        pageNumber: p.pageNumber,
+                        sourceFile: sc.fileName,
+                        boundingBox: p.bounds,
+                    };
+                }),
+            }));
+
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/6d569bee-72b8-4760-bb05-e3f164c6af6f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ContextPanel.tsx:handleProcessWithAI:afterMap',message:'Sheets prepared',data:{sheetsToProcessCount:sheetsToProcess.length,totalPointers:sheetsToProcess.reduce((s,sh)=>s+sh.pointers.length,0)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+        // #endregion
+
+        if (sheetsToProcess.length === 0) return;
+        setViewMode('processed');
+        await processWithAI(`batch_${Date.now()}`, sheetsToProcess);
+    }, [sheetContexts, processWithAI]);
+    
+    // Handle loading context preview (file-specific)
+    const handleLoadContextPreview = async () => {
+        if (!selectedPlanId) return;
+        
+        // Show warning if still processing
+        if (isProcessing) {
+            const proceed = window.confirm(
+                'Processing is still in progress. Some pages may not have complete context yet. Continue anyway?'
+            );
+            if (!proceed) return;
+        }
+        
+        setIsLoadingPreview(true);
+        setPreviewError(null);
+        
+        try {
+            const preview = await fetchContextPreview(selectedPlanId);
+            setContextPreview(preview);
+            setShowPreviewModal(true);
+        } catch (err) {
+            setPreviewError(err instanceof Error ? err.message : 'Failed to load context preview');
+        } finally {
+            setIsLoadingPreview(false);
+        }
+    };
+    
+    // Handle loading project-wide commit preview (all pointers with AI analysis)
+    const handleLoadProjectPreview = async () => {
+        if (!projectId) return;
+        
+        setIsLoadingProjectPreview(true);
+        setProjectPreviewError(null);
+        
+        try {
+            const preview = await fetchProjectCommitPreview(projectId);
+            setProjectPreview(preview);
+            setShowProjectPreviewModal(true);
+        } catch (err) {
+            setProjectPreviewError(err instanceof Error ? err.message : 'Failed to load project preview');
+        } finally {
+            setIsLoadingProjectPreview(false);
+        }
+    };
+
+    // Handle clearing all annotations from DB
+    const handleConfirmClearAnnotations = async () => {
+        setShowClearAnnotationsConfirm(false);
+        setIsClearingAnnotations(true);
+        setClearAnnotationsError(null);
+
+        try {
+            await deleteAllProjectPointers(projectId);
+            // Refresh context data to show empty state
+            fetchContext();
+            // Also reset processed pointers local state
+            resetAIProcessing();
+        } catch (err) {
+            setClearAnnotationsError(err instanceof Error ? err.message : 'Failed to clear annotations');
+        } finally {
+            setIsClearingAnnotations(false);
+        }
+    };
+
+    // Handle continue processing unprocessed pointers from project preview modal
+    const handleContinueProcessing = useCallback(async () => {
+        if (!projectPreview) return;
+        
+        // Close modal
+        setShowProjectPreviewModal(false);
+        setProjectPreview(null);
+        
+        // Switch to processed view
+        setViewMode('processed');
+        
+        // Build sheets with only unprocessed pointers
+        const sheetsToProcess = projectPreview.files
+            .filter(file => file.pointers.some(p => !p.aiAnalysis))
+            .map(file => ({
+                sheetId: file.id,
+                fileName: file.name,
+                pointers: file.pointers
+                    .filter(p => !p.aiAnalysis)
+                    .map(p => ({
+                        id: p.id,
+                        imageBase64: '', // Backend will render from PDF using crop image
+                        title: p.title,
+                        description: p.description || '',
+                        pageNumber: p.pageNumber,
+                        sourceFile: file.name,
+                        boundingBox: p.bounds ? {
+                            x: p.bounds.xNorm,
+                            y: p.bounds.yNorm,
+                            width: p.bounds.wNorm,
+                            height: p.bounds.hNorm,
+                        } : undefined,
+                    })),
+            }))
+            .filter(sheet => sheet.pointers.length > 0);
+        
+        if (sheetsToProcess.length > 0) {
+            await processWithAI(`batch_${Date.now()}`, sheetsToProcess);
+        }
+    }, [projectPreview, processWithAI]);
+
     // Handle resize
     const handleMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -803,7 +1139,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
             // Calculate new width from the left edge of the panel
             const newWidth = window.innerWidth - e.clientX;
             // Constrain between 300px and 600px
-            const constrainedWidth = Math.max(300, Math.min(newWidth, 600));
+            const constrainedWidth = Math.max(300, Math.min(newWidth, 800));
             onWidthChange(constrainedWidth);
         };
 
@@ -857,14 +1193,26 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                     {/* View Mode Toggle */}
                     <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
                         <button
+                            onClick={() => setViewMode('global')}
+                            className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                                viewMode === 'global'
+                                    ? 'bg-gray-700 text-cyan-400'
+                                    : 'text-gray-500 hover:text-gray-300'
+                            }`}
+                            title="All project context"
+                        >
+                            Global
+                        </button>
+                        <button
                             onClick={() => setViewMode('context')}
                             className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
                                 viewMode === 'context'
                                     ? 'bg-gray-700 text-cyan-400'
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
+                            title="Current file context"
                         >
-                            Files
+                            File
                         </button>
                         <button
                             onClick={() => setViewMode('processed')}
@@ -873,33 +1221,94 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                                     ? 'bg-gray-700 text-cyan-400'
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
+                            title="AI processed results"
                         >
                             Processed
                         </button>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {/* Add to Context Button - only show in global view */}
+                    {viewMode === 'global' && onAddGlobalToContext && (
+                        <>
+                            <button
+                                onClick={() => {
+                                    if (contextData?.files) {
+                                        onAddGlobalToContext(contextData.files);
+                                        setViewMode('context');
+                                    }
+                                }}
+                                disabled={isLoadingContext || !contextData?.files?.length}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
+                                    isLoadingContext || !contextData?.files?.length
+                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                        : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                                }`}
+                                title={!contextData?.files?.length ? 'No files to add' : 'Add all global files to File context'}
+                            >
+                                <PlusIcon className="w-3.5 h-3.5" />
+                                Add to Context
+                            </button>
+                            {/* Clear All Annotations Button */}
+                            {contextData && contextData.totalPointers > 0 && (
+                                <button
+                                    onClick={() => setShowClearAnnotationsConfirm(true)}
+                                    disabled={isClearingAnnotations}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded transition-colors disabled:opacity-50"
+                                    title="Delete all context pointers from database"
+                                >
+                                    <TrashIcon className="w-3.5 h-3.5" />
+                                    {isClearingAnnotations ? 'Clearing...' : 'Clear All'}
+                                </button>
+                            )}
+                        </>
+                    )}
                     {/* Process with AI Button - only show in context view */}
                     {viewMode === 'context' && (
                         <button
-                            onClick={handleExport}
-                            disabled={stats.total === 0 || isExporting}
+                            onClick={handleProcessWithAI}
+                            disabled={aiIsProcessing || !Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0)}
                             className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
-                                stats.total === 0 || isExporting
+                                aiIsProcessing || !Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0)
                                     ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
                                     : 'bg-cyan-600 hover:bg-cyan-500 text-white'
                             }`}
-                            title={stats.total === 0 ? 'Add sheets to context first' : 'Export for AI processing'}
+                            title={!Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0) ? 'Add context pointers first' : 'Process with AI'}
                         >
-                            {isExporting ? (
+                            {aiIsProcessing ? (
                                 <>
                                     <SpinnerIcon className="w-3.5 h-3.5" />
-                                    Exporting...
+                                    Processing...
                                 </>
                             ) : (
                                 <>
                                     <CloudArrowUpIcon className="w-3.5 h-3.5" />
                                     Process with AI
+                                </>
+                            )}
+                        </button>
+                    )}
+                    {/* Commit to ViewM4D Button - only show in processed view */}
+                    {viewMode === 'processed' && (
+                        <button
+                            onClick={handleLoadProjectPreview}
+                            disabled={isLoadingProjectPreview}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
+                                isLoadingProjectPreview
+                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                    : 'bg-green-600 hover:bg-green-500 text-white'
+                            }`}
+                            title="Preview and commit all context pointers to ViewM4D database"
+                        >
+                            {isLoadingProjectPreview ? (
+                                <>
+                                    <SpinnerIcon className="w-3.5 h-3.5" />
+                                    Loading...
+                                </>
+                            ) : (
+                                <>
+                                    <DatabaseIcon className="w-3.5 h-3.5" />
+                                    Preview Commit
                                 </>
                             )}
                         </button>
@@ -934,11 +1343,139 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                     <span className="text-xs text-red-400">{exportError}</span>
                 </div>
             )}
+            
+            {/* Processing Status Bar */}
+            {viewMode === 'context' && processingStatus && processingStatus.total > 0 && (
+                <div className="mx-4 mt-2">
+                    {isProcessing ? (
+                        // Processing in progress
+                        <div className="px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg flex items-center gap-2">
+                            <SpinnerIcon className="w-4 h-4 text-cyan-400" />
+                            <span className="text-xs text-cyan-300 font-medium">
+                                Processing: {processingStatus.completed}/{processingStatus.total}
+                            </span>
+                            <button 
+                                onClick={refreshStatus}
+                                className="ml-auto p-1 hover:bg-cyan-500/20 rounded transition-colors"
+                                title="Refresh status"
+                            >
+                                <RefreshIcon className="w-3 h-3 text-cyan-400" />
+                            </button>
+                        </div>
+                    ) : processingHasErrors ? (
+                        // Has errors
+                        <div className="px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2">
+                            <ExclamationCircleIcon className="w-4 h-4 text-amber-400" />
+                            <span className="text-xs text-amber-300 font-medium">
+                                {processingStatus.errors} page{processingStatus.errors !== 1 ? 's' : ''} failed
+                            </span>
+                            <span className="text-xs text-gray-500">
+                                ({processingStatus.completed}/{processingStatus.total} complete)
+                            </span>
+                        </div>
+                    ) : processingComplete ? (
+                        // All complete
+                        <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-2">
+                            <CheckIcon className="w-4 h-4 text-green-400" />
+                            <span className="text-xs text-green-300 font-medium">
+                                All pages processed
+                            </span>
+                        </div>
+                    ) : null}
+                </div>
+            )}
+            
+            {/* Preview Error Toast */}
+            {previewError && (
+                <div className="mx-4 mt-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
+                    <ExclamationCircleIcon className="w-4 h-4 text-red-400" />
+                    <span className="text-xs text-red-400">{previewError}</span>
+                    <button 
+                        onClick={() => setPreviewError(null)} 
+                        className="ml-auto text-red-400 hover:text-red-300"
+                    >
+                        <CloseIcon className="w-3 h-3" />
+                    </button>
+                </div>
+            )}
 
             {/* Content Area */}
-            {viewMode === 'context' ? (
+            {viewMode === 'global' ? (
                 <>
-                    {/* Split Content: Tree + Preview */}
+                    {/* Global Context View: All project files */}
+                    <div className="flex-1 flex overflow-hidden">
+                        {/* Left: Global File Tree */}
+                        <div className="w-[350px] min-w-[200px] max-w-[350px] border-r border-gray-700 overflow-hidden">
+                            <GlobalTreeView
+                                files={contextData?.files || []}
+                                selection={globalSelection}
+                                expandedFiles={expandedFiles}
+                                expandedPages={expandedPages}
+                                onToggleFileExpand={toggleFileExpand}
+                                onTogglePageExpand={togglePageExpand}
+                                onSelectFile={selectFile}
+                                onSelectPage={selectPage}
+                                onSelectPointer={selectPointer}
+                                onPointerDoubleClick={onPointerNavigate}
+                                isLoading={isLoadingContext}
+                                error={contextError}
+                                onRefresh={fetchContext}
+                            />
+                        </div>
+                        {/* Right: Preview */}
+                        <div className="flex-1 overflow-hidden">
+                            <GlobalPreviewView
+                                selectionType={globalSelection.type}
+                                selectedFile={selectedFile}
+                                selectedPage={selectedPage}
+                                selectedPointer={selectedPointer}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Footer with Global Stats */}
+                    <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
+                        <div className="text-[10px] text-gray-500">
+                            {contextData ? (
+                                <>
+                                    <span>{contextData.totalFiles} files</span>
+                                    <span className="mx-1">•</span>
+                                    <span>{contextData.totalPages} pages</span>
+                                    <span className="mx-1">•</span>
+                                    <span>{contextData.totalPointers} pointers</span>
+                                    <span className="mx-1">•</span>
+                                    <span className="text-green-400">{contextData.pagesComplete} complete</span>
+                                </>
+                            ) : (
+                                <span>Loading...</span>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={collapseAll}
+                                className="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+                            >
+                                Collapse All
+                            </button>
+                            <button
+                                onClick={expandAll}
+                                className="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+                            >
+                                Expand All
+                            </button>
+                            <button
+                                onClick={fetchContext}
+                                className="p-1 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+                                title="Refresh"
+                            >
+                                <RefreshIcon className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                </>
+            ) : viewMode === 'context' ? (
+                <>
+                    {/* Current File Context View */}
                     <div className="flex-1 flex overflow-hidden">
                         {/* Left: File Tree */}
                         <div className="w-[180px] min-w-[150px] max-w-[200px] border-r border-gray-700 overflow-y-auto custom-scrollbar">
@@ -954,19 +1491,1171 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                         </div>
                     </div>
 
-                    {/* Footer Stats */}
-                    <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between text-[10px] text-gray-500">
-                        <span>{stats.total} sheets | {stats.totalPointers} pointers</span>
-                        <span>{stats.complete}/{stats.withPointers} generated</span>
+                    {/* Footer with Stats and Preview Button */}
+                    <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
+                        <div className="text-[10px] text-gray-500">
+                            <span>{stats.total} sheets | {stats.totalPointers} pointers</span>
+                            <span className="mx-2">•</span>
+                            <span>{stats.complete}/{stats.withPointers} generated</span>
+                        </div>
+                        {selectedPlanId && (
+                            <button
+                                onClick={handleLoadContextPreview}
+                                disabled={isLoadingPreview || (processingStatus?.total === 0)}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
+                                    isLoadingPreview || (processingStatus?.total === 0)
+                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                        : isProcessing
+                                            ? 'bg-amber-600/80 hover:bg-amber-500 text-white'
+                                            : 'bg-green-600 hover:bg-green-500 text-white'
+                                }`}
+                                title={
+                                    processingStatus?.total === 0
+                                        ? 'No pages have been processed yet'
+                                        : isProcessing
+                                            ? 'Processing in progress - preview may be incomplete'
+                                            : 'Load context preview'
+                                }
+                            >
+                                {isLoadingPreview ? (
+                                    <>
+                                        <SpinnerIcon className="w-3.5 h-3.5" />
+                                        Loading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <EyeIcon className="w-3.5 h-3.5" />
+                                        Load Context Preview
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
                 </>
             ) : (
-                /* Processed Batches View */
+                /* Streaming Processed View */
                 <div className="flex-1 overflow-hidden">
-                    <ProcessedBatchesView />
+                    <StreamingProcessedView
+                        isProcessing={aiIsProcessing}
+                        progress={aiProgress}
+                        processedPointers={processedPointers}
+                        error={aiError}
+                        onCancel={cancelProcessing}
+                        onReset={resetAIProcessing}
+                        projectId={projectId}
+                    />
+                </div>
+            )}
+            
+            {/* Context Preview Modal (file-specific) */}
+            {showPreviewModal && contextPreview && (
+                <ContextPreviewModal
+                    preview={contextPreview}
+                    onClose={() => {
+                        setShowPreviewModal(false);
+                        setContextPreview(null);
+                    }}
+                    onCommitSuccess={(result) => {
+                        setCommitSuccess({ pages: result.pagesCommitted, pointers: result.pointersCommitted });
+                        // Refresh processing status after commit
+                        refreshStatus();
+                        // Clear success message after 5 seconds
+                        setTimeout(() => setCommitSuccess(null), 5000);
+                    }}
+                />
+            )}
+            
+            {/* Project Commit Preview Modal (all pointers with AI analysis) */}
+            {showProjectPreviewModal && projectPreview && (
+                <ProjectCommitPreviewModal
+                    preview={projectPreview}
+                    onClose={() => {
+                        setShowProjectPreviewModal(false);
+                        setProjectPreview(null);
+                    }}
+                    onCommitSuccess={(result) => {
+                        setCommitSuccess({ pages: result.pagesCommitted, pointers: result.pointersCommitted });
+                        // Refresh context data after commit
+                        fetchContext();
+                        // Clear success message after 5 seconds
+                        setTimeout(() => setCommitSuccess(null), 5000);
+                    }}
+                    onContinueProcessing={handleContinueProcessing}
+                    onPreviewRefresh={handleLoadProjectPreview}
+                />
+            )}
+            
+            {/* Commit Success Toast - Fixed position */}
+            {commitSuccess && (
+                <div className="fixed top-4 right-4 z-[100] px-4 py-3 bg-green-500/90 text-white rounded-lg shadow-lg flex items-center gap-2 animate-fade-in">
+                    <CheckIcon className="w-5 h-5" />
+                    <span className="text-sm">
+                        Successfully committed {commitSuccess.pages} pages + {commitSuccess.pointers} pointers
+                    </span>
+                    <button
+                        onClick={() => setCommitSuccess(null)}
+                        className="ml-2 text-white/80 hover:text-white"
+                    >
+                        <CloseIcon className="w-4 h-4" />
+                    </button>
+                </div>
+            )}
+
+            {/* Clear Annotations Error Toast */}
+            {clearAnnotationsError && (
+                <div className="fixed top-4 right-4 z-[100] px-4 py-3 bg-red-500/90 text-white rounded-lg shadow-lg flex items-center gap-2">
+                    <ExclamationCircleIcon className="w-5 h-5" />
+                    <span className="text-sm">{clearAnnotationsError}</span>
+                    <button
+                        onClick={() => setClearAnnotationsError(null)}
+                        className="ml-2 text-white/80 hover:text-white"
+                    >
+                        <CloseIcon className="w-4 h-4" />
+                    </button>
+                </div>
+            )}
+
+            {/* Clear All Annotations Confirmation Dialog */}
+            {showClearAnnotationsConfirm && (
+                <div 
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={() => setShowClearAnnotationsConfirm(false)}
+                >
+                    <div 
+                        className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6 max-w-md mx-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+                                <ExclamationCircleIcon className="w-5 h-5 text-red-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-200">Clear All Annotations</h3>
+                        </div>
+                        <p className="text-gray-400 mb-4">
+                            This will permanently delete all <strong className="text-white">{contextData?.totalPointers || 0} context pointers</strong> from the database.
+                        </p>
+                        <p className="text-sm text-red-400/80 mb-6">
+                            This action cannot be undone. You will need to recreate all annotations from scratch.
+                        </p>
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => setShowClearAnnotationsConfirm(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmClearAnnotations}
+                                className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                            >
+                                Yes, Delete All
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>
+    );
+};
+
+// ============================================
+// Project Commit Preview Modal Component
+// ============================================
+
+const ProjectCommitPreviewModal: React.FC<{
+    preview: ProjectCommitPreviewResponse;
+    onClose: () => void;
+    onCommitSuccess?: (result: ContextCommitResponse) => void;
+    onContinueProcessing?: () => void;
+    onPreviewRefresh?: () => void;
+}> = ({ preview, onClose, onCommitSuccess, onContinueProcessing, onPreviewRefresh }) => {
+    const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+    const [expandedPointers, setExpandedPointers] = useState<Set<string>>(new Set());
+    const [isCommitting, setIsCommitting] = useState(false);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+    const [commitError, setCommitError] = useState<string | null>(null);
+    const [commitResult, setCommitResult] = useState<ContextCommitResponse | null>(null);
+    const [lightboxImage, setLightboxImage] = useState<{ url: string; alt: string } | null>(null);
+    // Un-commit state
+    const [isUncommitting, setIsUncommitting] = useState(false);
+    const [showUncommitConfirm, setShowUncommitConfirm] = useState(false);
+    const [uncommitError, setUncommitError] = useState<string | null>(null);
+
+    // Close on Escape key
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !showConfirmDialog) {
+                onClose();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [onClose, showConfirmDialog]);
+
+    const toggleFile = (fileId: string) => {
+        setExpandedFiles(prev => {
+            const next = new Set(prev);
+            if (next.has(fileId)) {
+                next.delete(fileId);
+            } else {
+                next.add(fileId);
+            }
+            return next;
+        });
+    };
+
+    const togglePointer = (pointerId: string) => {
+        setExpandedPointers(prev => {
+            const next = new Set(prev);
+            if (next.has(pointerId)) {
+                next.delete(pointerId);
+            } else {
+                next.add(pointerId);
+            }
+            return next;
+        });
+    };
+
+    const expandAllFiles = () => {
+        setExpandedFiles(new Set(preview.files.map(f => f.id)));
+    };
+
+    const collapseAllFiles = () => {
+        setExpandedFiles(new Set());
+        setExpandedPointers(new Set());
+    };
+
+    const handleCommitClick = () => {
+        setShowConfirmDialog(true);
+    };
+
+    const handleConfirmCommit = async () => {
+        setShowConfirmDialog(false);
+        setIsCommitting(true);
+        setCommitError(null);
+
+        try {
+            const result = await commitProjectContext(preview.projectId);
+            setCommitResult(result);
+            onCommitSuccess?.(result);
+        } catch (err) {
+            setCommitError(err instanceof Error ? err.message : 'Failed to commit context');
+        } finally {
+            setIsCommitting(false);
+        }
+    };
+
+    const handleConfirmUncommit = async () => {
+        setShowUncommitConfirm(false);
+        setIsUncommitting(true);
+        setUncommitError(null);
+
+        try {
+            await uncommitProjectPointers(preview.projectId);
+            // Refresh the preview to show updated counts
+            onPreviewRefresh?.();
+        } catch (err) {
+            setUncommitError(err instanceof Error ? err.message : 'Failed to un-commit pointers');
+        } finally {
+            setIsUncommitting(false);
+        }
+    };
+
+    return (
+        <>
+            <style>{`
+                @keyframes modal-fade-in {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+                @keyframes modal-slide-in {
+                    from { opacity: 0; transform: translateY(10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                .modal-backdrop {
+                    animation: modal-fade-in 0.2s ease-out forwards;
+                }
+                .modal-content {
+                    animation: modal-slide-in 0.2s ease-out forwards;
+                }
+            `}</style>
+            <div 
+                className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+                onClick={onClose}
+            >
+                <div 
+                    className="modal-content bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col"
+                    style={{ width: '90vw', maxWidth: '1400px', height: '85vh' }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
+                        <div>
+                            <h2 className="text-xl font-semibold text-gray-200">Commit to ViewM4D</h2>
+                            <p className="text-sm text-gray-500 mt-0.5">{preview.projectName} - All Context Pointers</p>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="p-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition-colors"
+                            aria-label="Close modal"
+                        >
+                            <CloseIcon className="w-5 h-5" />
+                        </button>
+                    </div>
+
+                    {/* Summary Bar */}
+                    <div className="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
+                        <div className="flex items-center gap-8">
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-200">{preview.summary.totalFiles}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Files</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-cyan-400">{preview.summary.totalPointers}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Pointers</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-green-400">{preview.summary.pointersWithAi}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">With AI</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-amber-400">{preview.summary.pointersCommitted}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Already Committed</div>
+                                {preview.summary.pointersCommitted > 0 && (
+                                    <button
+                                        onClick={() => setShowUncommitConfirm(true)}
+                                        disabled={isUncommitting}
+                                        className="mt-1 px-2 py-0.5 text-[10px] text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30 rounded transition-colors disabled:opacity-50"
+                                    >
+                                        {isUncommitting ? 'Resetting...' : 'Un-commit All'}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={expandAllFiles}
+                                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors"
+                            >
+                                Expand All
+                            </button>
+                            <button
+                                onClick={collapseAllFiles}
+                                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors"
+                            >
+                                Collapse All
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Un-commit Error Toast */}
+                    {uncommitError && (
+                        <div className="mx-6 my-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2">
+                            <ExclamationCircleIcon className="w-4 h-4 text-red-400" />
+                            <span className="text-xs text-red-400">{uncommitError}</span>
+                            <button 
+                                onClick={() => setUncommitError(null)} 
+                                className="ml-auto text-red-400 hover:text-red-300"
+                            >
+                                <CloseIcon className="w-3 h-3" />
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Content Area */}
+                    <div className="flex-1 overflow-auto custom-scrollbar">
+                        {commitResult ? (
+                            // Success state
+                            <div className="flex flex-col items-center justify-center h-full p-8">
+                                <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                                    <CheckIcon className="w-8 h-8 text-green-400" />
+                                </div>
+                                <h3 className="text-xl font-semibold text-gray-200 mb-2">Successfully Committed</h3>
+                                <p className="text-gray-400 text-center mb-6">
+                                    {commitResult.pointersCommitted} context pointers are now available<br />
+                                    to the ViewM4D Grok agent for queries.
+                                </p>
+                                {commitResult.warnings.length > 0 && (
+                                    <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg max-w-md">
+                                        <p className="text-sm text-amber-400 font-medium mb-2">Warnings:</p>
+                                        {commitResult.warnings.map((warning, i) => (
+                                            <p key={i} className="text-xs text-amber-300">{warning}</p>
+                                        ))}
+                                    </div>
+                                )}
+                                <button
+                                    onClick={onClose}
+                                    className="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        ) : commitError ? (
+                            // Error state
+                            <div className="flex flex-col items-center justify-center h-full p-8">
+                                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
+                                    <ExclamationCircleIcon className="w-8 h-8 text-red-400" />
+                                </div>
+                                <h3 className="text-xl font-semibold text-gray-200 mb-2">Commit Failed</h3>
+                                <p className="text-red-400 text-center mb-6">{commitError}</p>
+                                <button
+                                    onClick={() => setCommitError(null)}
+                                    className="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                                >
+                                    Try Again
+                                </button>
+                            </div>
+                        ) : (
+                            // Preview state - Show all files and pointers
+                            <div className="divide-y divide-gray-700/50">
+                                {preview.files.map(file => (
+                                    <div key={file.id}>
+                                        {/* File Header */}
+                                        <button
+                                            onClick={() => toggleFile(file.id)}
+                                            className="w-full px-6 py-4 flex items-center gap-3 hover:bg-gray-800/40 transition-colors text-left"
+                                        >
+                                            <ChevronDownIcon 
+                                                className={`w-4 h-4 text-gray-500 transition-transform flex-shrink-0 ${
+                                                    expandedFiles.has(file.id) ? '' : '-rotate-90'
+                                                }`} 
+                                            />
+                                            <FolderIcon className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                                            <span className="text-sm font-medium text-gray-200 flex-1 truncate">
+                                                {file.name}
+                                            </span>
+                                            <div className="flex items-center gap-3 flex-shrink-0">
+                                                <span className="text-xs text-gray-500">
+                                                    {file.pointerCount} pointer{file.pointerCount !== 1 ? 's' : ''}
+                                                </span>
+                                                {file.pointersWithAi > 0 && (
+                                                    <span className="text-[10px] text-green-400 bg-green-500/10 px-2 py-0.5 rounded">
+                                                        {file.pointersWithAi} with AI
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </button>
+
+                                        {/* File Content - Pointers */}
+                                        {expandedFiles.has(file.id) && (
+                                            <div className="px-6 pb-4 pl-14 space-y-3">
+                                                {file.pointers.map(pointer => (
+                                                    <div 
+                                                        key={pointer.id}
+                                                        className={`bg-gray-800/50 rounded-lg overflow-hidden border ${
+                                                            !pointer.aiAnalysis ? 'opacity-50 border-dashed border-gray-600' : 'border-cyan-500/50'
+                                                        }`}
+                                                    >
+                                                        {/* Crop Image Preview - Large, above text */}
+                                                        <div 
+                                                            className="w-full cursor-pointer hover:opacity-90 transition-opacity"
+                                                            onDoubleClick={() => setLightboxImage({ 
+                                                                url: getPointerCropImageUrl(pointer.id), 
+                                                                alt: pointer.title || 'Pointer crop' 
+                                                            })}
+                                                            title="Double-click to view full size"
+                                                        >
+                                                            <img 
+                                                                src={getPointerCropImageUrl(pointer.id)}
+                                                                alt="Pointer crop"
+                                                                className="h-40 object-contain object-left"
+                                                                onError={(e) => {
+                                                                    (e.target as HTMLImageElement).parentElement!.style.display = 'none';
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        {/* Pointer Header */}
+                                                        <button
+                                                            onClick={() => togglePointer(pointer.id)}
+                                                            className="w-full px-4 py-3 flex items-start gap-3 hover:bg-gray-700/30 transition-colors text-left"
+                                                        >
+                                                            <ChevronDownIcon 
+                                                                className={`w-4 h-4 text-gray-500 transition-transform flex-shrink-0 mt-1 ${
+                                                                    expandedPointers.has(pointer.id) ? '' : '-rotate-90'
+                                                                }`} 
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-2 mb-1">
+                                                                    <span className="text-base font-medium text-gray-200">{pointer.title}</span>
+                                                                    <span className="text-xs text-gray-500">Page {pointer.pageNumber}</span>
+                                                                </div>
+                                                                {pointer.description && (
+                                                                    <p className="text-sm text-gray-400 line-clamp-2">
+                                                                        {pointer.description}
+                                                                    </p>
+                                                                )}
+                                                                {/* Quick AI badges */}
+                                                                {pointer.aiAnalysis ? (
+                                                                    <div className="flex items-center gap-2 mt-2">
+                                                                        {pointer.aiAnalysis.tradeCategory && (
+                                                                            <span className="text-xs px-2 py-0.5 bg-cyan-500/10 text-cyan-400 rounded">
+                                                                                {pointer.aiAnalysis.tradeCategory}
+                                                                            </span>
+                                                                        )}
+                                                                        {pointer.committedAt && (
+                                                                            <span className="text-xs px-2 py-0.5 bg-green-500/10 text-green-400 rounded">
+                                                                                Committed
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="flex items-center gap-2 mt-2">
+                                                                        <span className="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded border border-amber-500/30">
+                                                                            Not AI Processed
+                                                                        </span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </button>
+
+                                                        {/* Expanded Pointer Details */}
+                                                        {expandedPointers.has(pointer.id) && pointer.aiAnalysis && (
+                                                            <div className="px-4 py-3 bg-gray-900/50 border-t border-gray-700/50 space-y-3">
+                                                                {/* Technical Description */}
+                                                                {pointer.aiAnalysis.technicalDescription && (
+                                                                    <div>
+                                                                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                            AI Analysis
+                                                                        </p>
+                                                                        <p className="text-base text-gray-300">
+                                                                            {pointer.aiAnalysis.technicalDescription}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Trade Category */}
+                                                                {pointer.aiAnalysis.tradeCategory && (
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-xs font-semibold text-gray-500 uppercase">Trade:</span>
+                                                                        <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 text-sm font-medium rounded">
+                                                                            {pointer.aiAnalysis.tradeCategory}
+                                                                        </span>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Identified Elements */}
+                                                                {pointer.aiAnalysis.identifiedElements && pointer.aiAnalysis.identifiedElements.length > 0 && (
+                                                                    <div>
+                                                                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                            Elements
+                                                                        </p>
+                                                                        <div className="flex flex-wrap gap-1">
+                                                                            {pointer.aiAnalysis.identifiedElements.map((el, i) => (
+                                                                                <span key={i} className="px-2 py-0.5 bg-gray-700 border border-gray-600 rounded text-sm text-gray-300">
+                                                                                    {typeof el === 'string' ? el : (el as any).name || JSON.stringify(el)}
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Recommendations */}
+                                                                {pointer.aiAnalysis.recommendations && (
+                                                                    <div>
+                                                                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                            Recommendations
+                                                                        </p>
+                                                                        <p className="text-sm text-gray-400 bg-gray-800/50 rounded p-2">
+                                                                            {pointer.aiAnalysis.recommendations}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Footer */}
+                    {!commitResult && !commitError && (
+                        <div className="px-6 py-4 border-t border-gray-700 flex items-center justify-between flex-shrink-0 bg-gray-800/30">
+                            <div className="text-xs text-gray-500">
+                                {preview.summary.totalPointers - preview.summary.pointersWithAi > 0 && (
+                                    <span className="text-amber-400">
+                                        {preview.summary.totalPointers - preview.summary.pointersWithAi} pointers without AI analysis
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                {/* Continue Processing button - only show if there are unprocessed pointers */}
+                                {preview.summary.totalPointers - preview.summary.pointersWithAi > 0 && onContinueProcessing && (
+                                    <button
+                                        onClick={onContinueProcessing}
+                                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                                    >
+                                        <SpinnerIcon className="w-4 h-4" />
+                                        Continue Processing
+                                    </button>
+                                )}
+                                <button
+                                    onClick={onClose}
+                                    className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleCommitClick}
+                                    disabled={isCommitting || (preview.summary.pointersWithAi - preview.summary.pointersCommitted) === 0}
+                                    className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                                        isCommitting || (preview.summary.pointersWithAi - preview.summary.pointersCommitted) === 0
+                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                            : 'bg-green-600 hover:bg-green-500 text-white'
+                                    }`}
+                                >
+                                    {isCommitting ? (
+                                        <>
+                                            <SpinnerIcon className="w-4 h-4" />
+                                            Committing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <DatabaseIcon className="w-4 h-4" />
+                                            Commit {preview.summary.pointersWithAi - preview.summary.pointersCommitted} Pointers
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Image Lightbox */}
+            {lightboxImage && (
+                <ImageLightbox
+                    imageUrl={lightboxImage.url}
+                    alt={lightboxImage.alt}
+                    onClose={() => setLightboxImage(null)}
+                />
+            )}
+
+            {/* Confirmation Dialog */}
+            {showConfirmDialog && (
+                <div 
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={() => setShowConfirmDialog(false)}
+                >
+                    <div 
+                        className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6 max-w-md mx-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                                <ExclamationCircleIcon className="w-5 h-5 text-amber-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-200">Confirm Commit</h3>
+                        </div>
+                        <p className="text-gray-400 mb-4">
+                            This will commit <strong className="text-white">{preview.summary.pointersWithAi - preview.summary.pointersCommitted} AI-processed pointers</strong> 
+                            {' '}across <strong className="text-white">{preview.summary.filesWithAi} files</strong> to the ViewM4D database.
+                        </p>
+                        {preview.summary.pointersCommitted > 0 && (
+                            <p className="text-sm text-cyan-400/80 mb-4">
+                                {preview.summary.pointersCommitted} pointer(s) already committed will be skipped.
+                            </p>
+                        )}
+                        {preview.summary.totalPointers > preview.summary.pointersWithAi && (
+                            <p className="text-sm text-amber-400/80 mb-4">
+                                {preview.summary.totalPointers - preview.summary.pointersWithAi} pointer(s) without AI analysis will be skipped.
+                            </p>
+                        )}
+                        <p className="text-sm text-gray-500 mb-6">
+                            These pointers will be available to superintendents via the Grok AI agent.
+                        </p>
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => setShowConfirmDialog(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmCommit}
+                                className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
+                            >
+                                Yes, Commit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Un-commit Confirmation Dialog */}
+            {showUncommitConfirm && (
+                <div 
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={() => setShowUncommitConfirm(false)}
+                >
+                    <div 
+                        className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6 max-w-md mx-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                                <ExclamationCircleIcon className="w-5 h-5 text-amber-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-200">Un-commit Pointers</h3>
+                        </div>
+                        <p className="text-gray-400 mb-4">
+                            This will reset the committed status on <strong className="text-white">{preview.summary.pointersCommitted} pointers</strong>.
+                        </p>
+                        <p className="text-sm text-amber-400/80 mb-6">
+                            They will need to be re-committed to be available to the ViewM4D agent.
+                        </p>
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => setShowUncommitConfirm(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmUncommit}
+                                className="px-4 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors"
+                            >
+                                Yes, Un-commit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
+// ============================================
+// Context Preview Modal Component (File-specific)
+// ============================================
+
+// Accordion Page Item Component
+const AccordionPageItem: React.FC<{
+    page: ContextPreviewResponse['pages'][0];
+    isExpanded: boolean;
+    onToggle: () => void;
+}> = ({ page, isExpanded, onToggle }) => {
+    const getStatusIcon = (status: string) => {
+        switch (status) {
+            case 'complete':
+                return <CheckIcon className="w-4 h-4 text-green-400 flex-shrink-0" />;
+            case 'error':
+                return <ExclamationCircleIcon className="w-4 h-4 text-amber-500 flex-shrink-0" />;
+            case 'processing':
+                return <SpinnerIcon className="w-4 h-4 text-cyan-400 flex-shrink-0" />;
+            default:
+                return <HollowCircleIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />;
+        }
+    };
+
+    const getBorderStyle = (status: string) => {
+        switch (status) {
+            case 'error':
+                return 'border-l-2 border-l-amber-500 bg-amber-500/5';
+            case 'processing':
+            case 'pending':
+                return 'border-l-2 border-l-cyan-500 bg-cyan-500/5';
+            default:
+                return '';
+        }
+    };
+
+    return (
+        <div className={`${getBorderStyle(page.contextStatus)}`}>
+            {/* Header - Always visible */}
+            <button
+                onClick={onToggle}
+                className="w-full px-5 py-3 flex items-center gap-3 hover:bg-gray-800/40 transition-colors text-left"
+            >
+                <ChevronDownIcon 
+                    className={`w-4 h-4 text-gray-500 transition-transform flex-shrink-0 ${
+                        isExpanded ? '' : '-rotate-90'
+                    }`} 
+                />
+                {getStatusIcon(page.contextStatus)}
+                <span className="text-sm font-medium text-gray-200 flex-1 truncate">
+                    {page.pageName}
+                </span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {page.pointers.length > 0 && (
+                        <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
+                            {page.pointers.length} pointer{page.pointers.length !== 1 ? 's' : ''}
+                        </span>
+                    )}
+                    {page.committedAt && (
+                        <span className="text-[10px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded">
+                            Committed
+                        </span>
+                    )}
+                </div>
+            </button>
+
+            {/* Expandable Content */}
+            {isExpanded && (
+                <div className="px-5 pb-4 pl-12 space-y-3">
+                    {/* Context Preview */}
+                    {page.context ? (
+                        <div className="bg-gray-800/50 rounded-lg p-3">
+                            <h4 className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Page Context</h4>
+                            <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                {page.context}
+                            </p>
+                        </div>
+                    ) : page.contextStatus === 'error' ? (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                            <p className="text-xs text-amber-400">
+                                Failed to process this page. Context generation encountered an error.
+                            </p>
+                        </div>
+                    ) : page.contextStatus === 'pending' || page.contextStatus === 'processing' ? (
+                        <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+                            <p className="text-xs text-cyan-400">
+                                {page.contextStatus === 'processing' 
+                                    ? 'Processing page context...' 
+                                    : 'Page context pending processing'
+                                }
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="bg-gray-800/50 rounded-lg p-3">
+                            <p className="text-xs text-gray-500 italic">No context available</p>
+                        </div>
+                    )}
+
+                    {/* Context Pointers */}
+                    {page.pointers.length > 0 && (
+                        <div>
+                            <h4 className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Context Pointers</h4>
+                            <div className="space-y-1.5">
+                                {page.pointers.map((pointer) => (
+                                    <div 
+                                        key={pointer.id}
+                                        className="bg-gray-800/30 rounded px-3 py-2 flex items-start gap-2"
+                                    >
+                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 flex-shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs text-gray-200 font-medium">{pointer.title}</p>
+                                            {pointer.description && (
+                                                <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">
+                                                    {pointer.description}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ContextPreviewModal: React.FC<{
+    preview: ContextPreviewResponse;
+    onClose: () => void;
+    onCommitSuccess?: (result: ContextCommitResponse) => void;
+}> = ({ preview, onClose, onCommitSuccess }) => {
+    const [expandedPages, setExpandedPages] = useState<Set<string>>(new Set());
+    const [isCommitting, setIsCommitting] = useState(false);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+    const [commitError, setCommitError] = useState<string | null>(null);
+    const [commitResult, setCommitResult] = useState<ContextCommitResponse | null>(null);
+
+    // Close on Escape key (only if no confirmation dialog is open)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !showConfirmDialog) {
+                onClose();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [onClose, showConfirmDialog]);
+
+    const togglePage = (pageId: string) => {
+        setExpandedPages(prev => {
+            const next = new Set(prev);
+            if (next.has(pageId)) {
+                next.delete(pageId);
+            } else {
+                next.add(pageId);
+            }
+            return next;
+        });
+    };
+
+    const expandAll = () => {
+        setExpandedPages(new Set(preview.pages.map(p => p.pageId)));
+    };
+
+    const collapseAll = () => {
+        setExpandedPages(new Set());
+    };
+
+    const handleCommitClick = () => {
+        setShowConfirmDialog(true);
+    };
+
+    const handleConfirmCommit = async () => {
+        setShowConfirmDialog(false);
+        setIsCommitting(true);
+        setCommitError(null);
+
+        try {
+            const result = await commitContext(preview.planId);
+            setCommitResult(result);
+            onCommitSuccess?.(result);
+        } catch (err) {
+            setCommitError(err instanceof Error ? err.message : 'Failed to commit context');
+        } finally {
+            setIsCommitting(false);
+        }
+    };
+
+    const handleCloseAfterSuccess = () => {
+        onClose();
+    };
+
+    // Calculate ready-to-commit pages (complete or error status)
+    const readyToCommitPages = preview.pages.filter(
+        p => p.contextStatus === 'complete' || p.contextStatus === 'error'
+    ).length;
+
+    return (
+        <>
+            <style>{`
+                @keyframes modal-fade-in {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+                @keyframes modal-slide-in {
+                    from { opacity: 0; transform: translateY(10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                .modal-backdrop {
+                    animation: modal-fade-in 0.2s ease-out forwards;
+                }
+                .modal-content {
+                    animation: modal-slide-in 0.2s ease-out forwards;
+                }
+            `}</style>
+            <div 
+                className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+                onClick={onClose}
+            >
+                <div 
+                    className="modal-content bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col"
+                    style={{ width: '80vw', maxWidth: '1200px', height: '80vh' }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
+                        <div>
+                            <h2 className="text-xl font-semibold text-gray-200">Context Preview</h2>
+                            <p className="text-sm text-gray-500 mt-0.5">{preview.planName}</p>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="p-2 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition-colors"
+                            aria-label="Close modal"
+                        >
+                            <CloseIcon className="w-5 h-5" />
+                        </button>
+                    </div>
+
+                    {/* Summary Bar */}
+                    <div className="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
+                        <div className="flex items-center gap-8">
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-200">{preview.summary.totalPages}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Pages</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-green-400">{preview.summary.pagesComplete}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Complete</div>
+                            </div>
+                            {preview.summary.pagesWithErrors > 0 && (
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold text-amber-400">{preview.summary.pagesWithErrors}</div>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wider">Errors</div>
+                                </div>
+                            )}
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-cyan-400">{preview.summary.totalPointers}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wider">Pointers</div>
+                            </div>
+                            {preview.summary.pagesCommitted > 0 && (
+                                <div className="text-center">
+                                    <div className="text-2xl font-bold text-purple-400">{preview.summary.pagesCommitted}</div>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-wider">Already Committed</div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={expandAll}
+                                className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+                            >
+                                Expand All
+                            </button>
+                            <button
+                                onClick={collapseAll}
+                                className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+                            >
+                                Collapse All
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Ready to Commit Summary */}
+                    <div className="px-6 py-3 bg-gradient-to-r from-cyan-500/10 to-green-500/10 border-b border-gray-700 flex-shrink-0">
+                        <p className="text-sm text-gray-300">
+                            <span className="font-semibold text-cyan-400">Ready to commit:</span>{' '}
+                            {readyToCommitPages} pages + {preview.summary.totalPointers} context pointers
+                        </p>
+                    </div>
+
+                    {/* Success State */}
+                    {commitResult && (
+                        <div className="flex-1 flex flex-col items-center justify-center p-8">
+                            <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                                <CheckIcon className="w-8 h-8 text-green-400" />
+                            </div>
+                            <h3 className="text-xl font-semibold text-gray-200 mb-2">Successfully Committed!</h3>
+                            <p className="text-gray-400 mb-6 text-center">
+                                Committed {commitResult.pagesCommitted} pages and {commitResult.pointersCommitted} context pointers to ViewM4D database.
+                            </p>
+                            {commitResult.warnings.length > 0 && (
+                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-6 max-w-md">
+                                    <h4 className="text-sm font-medium text-amber-400 mb-2">Warnings:</h4>
+                                    <ul className="text-xs text-amber-300 space-y-1">
+                                        {commitResult.warnings.map((warning, idx) => (
+                                            <li key={idx}>{warning}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            <button
+                                onClick={handleCloseAfterSuccess}
+                                className="px-6 py-2.5 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Pages List (shown when not in success state) */}
+                    {!commitResult && (
+                        <>
+                            <div className="flex-1 overflow-auto custom-scrollbar">
+                                <div className="divide-y divide-gray-800">
+                                    {preview.pages.map((page) => (
+                                        <AccordionPageItem
+                                            key={page.pageId}
+                                            page={page}
+                                            isExpanded={expandedPages.has(page.pageId)}
+                                            onToggle={() => togglePage(page.pageId)}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Error Toast */}
+                            {commitError && (
+                                <div className="mx-6 mb-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
+                                    <ExclamationCircleIcon className="w-5 h-5 text-red-400 flex-shrink-0" />
+                                    <span className="text-sm text-red-400 flex-1">{commitError}</span>
+                                    <button
+                                        onClick={() => setCommitError(null)}
+                                        className="text-red-400 hover:text-red-300"
+                                    >
+                                        <CloseIcon className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Modal Footer */}
+                            <div className="px-6 py-4 border-t border-gray-700 flex items-center justify-end gap-3 flex-shrink-0">
+                                <button
+                                    onClick={onClose}
+                                    className="px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleCommitClick}
+                                    disabled={isCommitting || readyToCommitPages === 0}
+                                    className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                                        isCommitting || readyToCommitPages === 0
+                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                            : 'bg-green-600 hover:bg-green-500 text-white'
+                                    }`}
+                                >
+                                    {isCommitting ? (
+                                        <>
+                                            <SpinnerIcon className="w-4 h-4" />
+                                            Committing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <DatabaseIcon className="w-4 h-4" />
+                                            Commit to ViewM4D Database
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+
+            {/* Confirmation Dialog */}
+            {showConfirmDialog && (
+                <div 
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                    onClick={() => setShowConfirmDialog(false)}
+                >
+                    <div 
+                        className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-6 max-w-md mx-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                                <ExclamationCircleIcon className="w-5 h-5 text-amber-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-200">Confirm Commit</h3>
+                        </div>
+                        <p className="text-gray-400 mb-6">
+                            This will push all context to production. This action will mark {readyToCommitPages} pages 
+                            and {preview.summary.totalPointers} context pointers as committed to the ViewM4D database.
+                        </p>
+                        <p className="text-sm text-gray-500 mb-6">
+                            Continue?
+                        </p>
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => setShowConfirmDialog(false)}
+                                className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmCommit}
+                                className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
+                            >
+                                Yes, Commit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 };
 

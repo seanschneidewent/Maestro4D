@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Project, Insight, InsightType, Severity, InsightStatus, ProjectSummary, Note, ScanData, AgentType, AgentState, PdfAnnotation, ThreeDAnnotation, SerializableFile, FileSystemNode } from '../types';
 import { ContextPointer, SheetContext, createEmptySheetContext } from '../types/context';
-import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon, RectangleIcon } from './Icons';
+import { ArrowLeftIcon, PencilIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, PlusIcon, DocumentIcon, RectangleIcon, ZoomInIcon, ZoomOutIcon, ZoomResetIcon } from './Icons';
 import Viewer from './Viewer';
 import PdfViewer, { PdfToolbarHandlers } from './PdfViewer';
 import PdfToolsPanel from './PdfToolsPanel';
@@ -11,6 +11,7 @@ import InsightChatPanel from './InsightChatPanel';
 import TimelineScrubber from './TimelineScrubber';
 import AddScanModal from './AddScanModal';
 import GeminiPanel, { AgentsLogo } from './GeminiPanel';
+import UserManagementPanel, { UsersLogo } from './UserManagementPanel';
 import AnnotationsPanel from './AnnotationsPanel';
 
 import { saveFileToDB, getFileFromDB, deleteFileFromDB } from '../utils/db';
@@ -33,8 +34,17 @@ import {
     updatePointer as updatePointerApi,
     deletePointer as deletePointerApi,
     fetchFilePointers,
+    deleteAllProjectFiles,
     ProjectFileResponse,
     ContextPointerResponse,
+    triggerPageContextProcessing,
+    fetchProcessingStatus,
+    fetchPageContextByPage,
+    createPointerFromHighlight,
+    PageContextResponse,
+    PointerSummaryBounds,
+    FileSummary,
+    PointerSummary,
 } from '../utils/api';
 
 // --- FILE HELPERS ---
@@ -455,6 +465,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const nameInputRef = useRef<HTMLInputElement>(null);
     const [agentStates, setAgentStates] = useState<Record<AgentType, AgentState>>(project.agentStates || DEFAULT_AGENT_STATES);
     const [isAgentsLauncherOpen, setIsAgentsLauncherOpen] = useState(false);
+    const [isUsersPanelOpen, setIsUsersPanelOpen] = useState(false);
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedScanDates, setSelectedScanDates] = useState<string[]>([]);
     const [isGlbActive, setIsGlbActive] = useState(false);
@@ -481,6 +492,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [pdfToolbarHandlers, setPdfToolbarHandlers] = useState<PdfToolbarHandlers | null>(null);
     const pdfToolsButtonRef = useRef<HTMLButtonElement>(null);
     const toolbarRef = useRef<HTMLDivElement>(null);
+
+    // Navigation target for PdfViewer (when double-clicking a pointer in context panel)
+    const [pdfNavigateTarget, setPdfNavigateTarget] = useState<{
+        pageNumber: number;
+        bounds?: PointerSummaryBounds;
+    } | null>(null);
 
     // Report overlay state
     type ReportType = 'progress' | 'deviation' | 'clash' | 'allData';
@@ -705,9 +722,6 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             // First try to load from backend
             try {
                 const backendFiles = await fetchProjectFiles(project.id);
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/0e9fcf86-bb9b-4a9a-8f51-b2cb9c55e0e3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectViewerPage:loadProjectMasterFiles',message:'Fetched backend files',data:{count:backendFiles.length,files:backendFiles.slice(0,5).map((f: ProjectFileResponse)=>({id:f.id,name:f.name}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-                // #endregion
                 if (backendFiles.length > 0) {
                     // Load files from backend
                     const hydratedFiles = await Promise.all(backendFiles.map(async (backendFile: ProjectFileResponse) => {
@@ -731,9 +745,6 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                 storageId 
                             };
                         } catch (downloadError) {
-                            // #region agent log
-                            fetch('http://127.0.0.1:7242/ingest/0e9fcf86-bb9b-4a9a-8f51-b2cb9c55e0e3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectViewerPage:loadProjectMasterFiles:downloadError',message:'Download failed',data:{fileId:backendFile.id,name:backendFile.name,error:String(downloadError)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-                            // #endregion
                             console.warn(`Failed to download file ${backendFile.name}:`, downloadError);
                             return null;
                         }
@@ -745,8 +756,27 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         const filesOnly = validFiles.map(f => f.file);
                         const tree = buildTreeFromFiles(filesOnly);
                         
+                        // Update tree nodes with backendId from hydrated files
+                        const backendIdByKey = new Map(validFiles.map(f => [`${f.file.name}-${f.file.size}`, f.backendId]));
+                        const updateWithBackendId = (nodes: FileSystemNode[]): FileSystemNode[] => {
+                            return nodes.map(node => {
+                                if (node.type === 'file' && node.file) {
+                                    const key = `${node.file.name}-${node.file.size}`;
+                                    const backendId = backendIdByKey.get(key);
+                                    if (backendId) {
+                                        return { ...node, backendId };
+                                    }
+                                }
+                                if (node.children) {
+                                    return { ...node, children: updateWithBackendId(node.children) };
+                                }
+                                return node;
+                            });
+                        };
+                        const treeWithBackendId = updateWithBackendId(tree);
+                        
                         setProjectMasterFiles(validFiles);
-                        setProjectMasterTree(tree);
+                        setProjectMasterTree(treeWithBackendId);
                         return; // Successfully loaded from backend
                     }
                 }
@@ -777,8 +807,27 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                 const filesOnly = hydratedFiles.map(f => f.file);
                 const tree = buildTreeFromFiles(filesOnly);
 
+                // Update tree nodes with backendId from hydrated files
+                const backendIdByKey = new Map(hydratedFiles.map(f => [`${f.file.name}-${f.file.size}`, f.backendId]));
+                const updateWithBackendId = (nodes: FileSystemNode[]): FileSystemNode[] => {
+                    return nodes.map(node => {
+                        if (node.type === 'file' && node.file) {
+                            const key = `${node.file.name}-${node.file.size}`;
+                            const backendId = backendIdByKey.get(key);
+                            if (backendId) {
+                                return { ...node, backendId };
+                            }
+                        }
+                        if (node.children) {
+                            return { ...node, children: updateWithBackendId(node.children) };
+                        }
+                        return node;
+                    });
+                };
+                const treeWithBackendId = updateWithBackendId(tree);
+
                 setProjectMasterFiles(hydratedFiles);
-                setProjectMasterTree(tree);
+                setProjectMasterTree(treeWithBackendId);
             } catch (error) {
                 console.error('Error loading project master files:', error);
             }
@@ -1256,6 +1305,39 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         });
     }, [updateCurrentScanViewerState, currentScanDate, isProjectMasterNode, projectMasterTree, projectMasterFiles]);
 
+    // Handle double-click navigation from context panel to specific file/page/pointer
+    const handlePointerNavigate = useCallback((
+        fileId: string,
+        pageNumber: number,
+        pointerId: string,
+        bounds?: PointerSummaryBounds
+    ) => {
+        // Find the file node by backendId
+        // Search in both project master tree and scan tree
+        const pmFileNodes = flattenTree(projectMasterTree).filter(n => n.type === 'file');
+        const scanFileNodes = flattenTree(currentScanViewerState.fileSystemTree).filter(n => n.type === 'file');
+        const allFileNodes = [...pmFileNodes, ...scanFileNodes];
+        
+        const targetNode = allFileNodes.find(n => n.backendId === fileId);
+        
+        if (!targetNode || !targetNode.file) {
+            console.warn('Could not find file for pointer navigation:', fileId);
+            return;
+        }
+
+        // Open the file
+        handleOpenFile(targetNode);
+
+        // Set navigation target for PdfViewer to scroll to page and zoom to bounds
+        setPdfNavigateTarget({
+            pageNumber,
+            bounds
+        });
+
+        // Select the pointer in the annotations panel
+        setSelectedAnnotationIds(new Set([pointerId]));
+    }, [projectMasterTree, currentScanViewerState.fileSystemTree, handleOpenFile]);
+
     const handleRenameNode = useCallback((node: FileSystemNode, newName: string) => {
         // Check if node is in Project Master tree
         if (isProjectMasterNode(node.id)) {
@@ -1656,15 +1738,53 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         // Build tree structure from files
         const newTreeNodes = buildTreeFromFiles(validFiles);
 
+        // Update tree nodes with backendId from the backend upload results
+        const updateTreeNodesWithBackendId = (nodes: FileSystemNode[]): FileSystemNode[] => {
+            return nodes.map(node => {
+                if (node.type === 'file' && node.file) {
+                    const key = `${node.file.name}-${node.file.size}`;
+                    const backendId = backendIdMap.get(key);
+                    if (backendId) {
+                        return { ...node, backendId };
+                    }
+                }
+                if (node.children) {
+                    return { ...node, children: updateTreeNodesWithBackendId(node.children) };
+                }
+                return node;
+            });
+        };
+        const treeNodesWithBackendId = updateTreeNodesWithBackendId(newTreeNodes);
+
         // Update project master state
         setProjectMasterFiles(prev => [...prev, ...newFileData]);
         setProjectMasterTree(prev => {
             let mergedTree = [...prev];
-            newTreeNodes.forEach(node => {
+            treeNodesWithBackendId.forEach(node => {
                 mergedTree = addNodeToTree(mergedTree, node, undefined);
             });
             return mergedTree;
         });
+    }, [project.id]);
+
+    const handleClearAllFiles = useCallback(async () => {
+        try {
+            // Delete all files from backend
+            await deleteAllProjectFiles(project.id);
+            
+            // Clear local state
+            setProjectMasterFiles([]);
+            setProjectMasterTree([]);
+            
+            // Revoke any object URLs we created
+            projectMasterUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+            projectMasterUrlsRef.current = [];
+            
+            console.log('All project files cleared successfully');
+        } catch (error) {
+            console.error('Failed to clear project files:', error);
+            alert('Failed to clear project files. Please try again.');
+        }
     }, [project.id]);
 
     const handleUploadModel = useCallback((files: File[]) => {
@@ -2012,6 +2132,17 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
     const [annotationsPanelHeight, setAnnotationsPanelHeight] = useState(300);
     const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<Set<string>>(new Set());
     const [editingPointerId, setEditingPointerId] = useState<string | null>(null);
+    const [hoveredPointerId, setHoveredPointerId] = useState<string | null>(null);
+
+    // Page Context State - tracks AI page analysis status per file
+    // Key: fileId (backendId), Value: { pageContexts, processingTriggered, lastStatus }
+    interface PageContextState {
+        pageContexts: Record<number, PageContextResponse>; // pageNumber -> PageContext
+        processingTriggered: boolean;
+        lastProcessingStatus: { completed: number; total: number } | null;
+    }
+    const [pageContextStates, setPageContextStates] = useState<Record<string, PageContextState>>({});
+    const processingPollingRef = useRef<Record<string, number>>({}); // fileId -> intervalId
 
     // Get current sheet context for selected file
     // Use backendId for API operations, but storageId/name for local state key
@@ -2075,14 +2206,89 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
         loadPointers();
     }, [currentFileBackendId, currentFileId, selectedCenterFile]);
 
+    // Auto-trigger page context processing when a PDF with backend ID is opened
+    useEffect(() => {
+        if (!currentFileBackendId || centerFileType !== 'pdf') return;
+        
+        // Check if we've already triggered processing for this file
+        const existingState = pageContextStates[currentFileBackendId];
+        if (existingState?.processingTriggered) return;
+        
+        const triggerProcessing = async () => {
+            try {
+                // Initialize state for this file
+                setPageContextStates(prev => ({
+                    ...prev,
+                    [currentFileBackendId]: {
+                        pageContexts: {},
+                        processingTriggered: true,
+                        lastProcessingStatus: null,
+                    },
+                }));
+                
+                // Trigger backend processing
+                const result = await triggerPageContextProcessing(currentFileBackendId);
+                console.log(`Started page context processing for ${currentFileBackendId}: ${result.message}`);
+                
+                // Start polling for status
+                const pollInterval = window.setInterval(async () => {
+                    try {
+                        const status = await fetchProcessingStatus(currentFileBackendId);
+                        setPageContextStates(prev => ({
+                            ...prev,
+                            [currentFileBackendId]: {
+                                ...prev[currentFileBackendId],
+                                lastProcessingStatus: { completed: status.completed, total: status.total },
+                            },
+                        }));
+                        
+                        // Stop polling when all pages are processed
+                        if (status.completed + status.errors >= status.total) {
+                            window.clearInterval(pollInterval);
+                            delete processingPollingRef.current[currentFileBackendId];
+                            console.log(`Page context processing complete for ${currentFileBackendId}`);
+                        }
+                    } catch (error) {
+                        console.warn('Failed to fetch processing status:', error);
+                    }
+                }, 2000); // Poll every 2 seconds
+                
+                processingPollingRef.current[currentFileBackendId] = pollInterval;
+            } catch (error) {
+                console.warn('Failed to trigger page context processing:', error);
+                // Still mark as triggered to avoid retrying
+                setPageContextStates(prev => ({
+                    ...prev,
+                    [currentFileBackendId]: {
+                        ...prev[currentFileBackendId],
+                        processingTriggered: true,
+                    },
+                }));
+            }
+        };
+        
+        triggerProcessing();
+        
+        // Cleanup polling on unmount
+        return () => {
+            const intervalId = processingPollingRef.current[currentFileBackendId];
+            if (intervalId) {
+                window.clearInterval(intervalId);
+                delete processingPollingRef.current[currentFileBackendId];
+            }
+        };
+    }, [currentFileBackendId, centerFileType, pageContextStates]);
+
     // Handler for creating a new pointer (called from PdfViewer when rectangle is drawn)
     const handlePointerCreate = useCallback(async (partial: Omit<ContextPointer, 'title' | 'description'>) => {
         if (!currentFileId || !selectedCenterFile) return;
         
+        // Create pointer with 'generating' status for AI analysis
         const pointer: ContextPointer = {
             ...partial,
             title: '',
             description: '',
+            status: 'generating',
         };
         
         // Update local state immediately for instant UI feedback
@@ -2097,24 +2303,91 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             };
         });
         
-        // Auto-open edit form for the new pointer
-        setEditingPointerId(pointer.id);
+        // Expand annotations panel to show the generating card
         setIsAnnotationsPanelCollapsed(false);
         
-        // Sync to backend if we have a backend file ID
+        // If we have a backend file ID, try AI-powered creation
         if (currentFileBackendId) {
             try {
-                const backendPointer = await createPointer({
-                    fileId: currentFileBackendId,
-                    pageNumber: pointer.pageNumber,
-                    bounds: pointer.bounds,
-                    style: pointer.style,
-                    title: pointer.title,
-                    description: pointer.description,
-                    snapshotDataUrl: pointer.snapshotDataUrl,
-                });
+                // First, try to get the page context for this page
+                const pageContext = await fetchPageContextByPage(currentFileBackendId, pointer.pageNumber);
                 
-                // Update local state with backend-generated ID
+                // Check if page context is ready for AI analysis
+                if (pageContext.status === 'complete' && pageContext.content) {
+                    // Use AI-powered highlight analysis
+                    const bbox = {
+                        x: pointer.bounds.xNorm,
+                        y: pointer.bounds.yNorm,
+                        width: pointer.bounds.wNorm,
+                        height: pointer.bounds.hNorm,
+                    };
+                    
+                    const backendPointer = await createPointerFromHighlight(pageContext.id, bbox);
+                    
+                    // Update local state with AI-generated content
+                    setSheetContexts(prev => {
+                        const existingSheet = prev[currentFileId];
+                        if (!existingSheet) return prev;
+                        
+                        return {
+                            ...prev,
+                            [currentFileId]: {
+                                ...existingSheet,
+                                pointers: existingSheet.pointers.map(p =>
+                                    p.id === pointer.id ? {
+                                        ...p,
+                                        id: backendPointer.id,
+                                        title: backendPointer.title,
+                                        description: backendPointer.description || '',
+                                        status: 'complete' as const,
+                                    } : p
+                                ),
+                            },
+                        };
+                    });
+                    
+                    // Select the newly created pointer
+                    setEditingPointerId(backendPointer.id);
+                } else {
+                    // Page context not ready - fall back to basic pointer creation
+                    console.log(`Page context not ready for page ${pointer.pageNumber}, creating basic pointer`);
+                    
+                    const backendPointer = await createPointer({
+                        fileId: currentFileBackendId,
+                        pageNumber: pointer.pageNumber,
+                        bounds: pointer.bounds,
+                        style: pointer.style,
+                        title: '',
+                        description: '',
+                        snapshotDataUrl: pointer.snapshotDataUrl,
+                    });
+                    
+                    // Update with backend ID but no AI content
+                    setSheetContexts(prev => {
+                        const existingSheet = prev[currentFileId];
+                        if (!existingSheet) return prev;
+                        
+                        return {
+                            ...prev,
+                            [currentFileId]: {
+                                ...existingSheet,
+                                pointers: existingSheet.pointers.map(p =>
+                                    p.id === pointer.id ? {
+                                        ...p,
+                                        id: backendPointer.id,
+                                        status: 'complete' as const,
+                                    } : p
+                                ),
+                            },
+                        };
+                    });
+                    
+                    setEditingPointerId(backendPointer.id);
+                }
+            } catch (error) {
+                console.warn('Failed to create pointer with AI:', error);
+                
+                // Mark as error state
                 setSheetContexts(prev => {
                     const existingSheet = prev[currentFileId];
                     if (!existingSheet) return prev;
@@ -2124,17 +2397,37 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         [currentFileId]: {
                             ...existingSheet,
                             pointers: existingSheet.pointers.map(p =>
-                                p.id === pointer.id ? { ...p, id: backendPointer.id } : p
+                                p.id === pointer.id ? {
+                                    ...p,
+                                    status: 'error' as const,
+                                    errorMessage: error instanceof Error ? error.message : 'Failed to analyze',
+                                } : p
                             ),
                         },
                     };
                 });
                 
-                // Update editing pointer ID to the backend ID
-                setEditingPointerId(backendPointer.id);
-            } catch (error) {
-                console.warn('Failed to create pointer in backend:', error);
+                // Still allow editing
+                setEditingPointerId(pointer.id);
             }
+        } else {
+            // No backend ID - just mark as complete without AI
+            setSheetContexts(prev => {
+                const existingSheet = prev[currentFileId];
+                if (!existingSheet) return prev;
+                
+                return {
+                    ...prev,
+                    [currentFileId]: {
+                        ...existingSheet,
+                        pointers: existingSheet.pointers.map(p =>
+                            p.id === pointer.id ? { ...p, status: 'complete' as const } : p
+                        ),
+                    },
+                };
+            });
+            
+            setEditingPointerId(pointer.id);
         }
     }, [currentFileId, selectedCenterFile, currentFileBackendId]);
 
@@ -2223,6 +2516,70 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
             };
         });
     }, [currentFileId, selectedCenterFile]);
+
+    // Handler for adding all global context files to the File tab context
+    const handleAddGlobalToContext = useCallback((files: FileSummary[]) => {
+        setSheetContexts(prev => {
+            const updated: Record<string, SheetContext> = { ...prev };
+            
+            for (const file of files) {
+                // Flatten all pointers from all pages into a single array
+                const allPointers: ContextPointer[] = file.pages.flatMap(page => 
+                    page.pointers.map((pointer: PointerSummary): ContextPointer => ({
+                        id: pointer.id,
+                        pageNumber: pointer.pageNumber,
+                        title: pointer.title,
+                        description: pointer.description || '',
+                        bounds: pointer.bounds || { xNorm: 0, yNorm: 0, wNorm: 0, hNorm: 0 },
+                        style: { color: '#06b6d4', strokeWidth: 2 }, // Default cyan color
+                        snapshotDataUrl: null,
+                        createdAt: new Date().toISOString(),
+                    }))
+                );
+                
+                // Create or update the sheet context for this file
+                const existingSheet = prev[file.id];
+                updated[file.id] = {
+                    fileId: file.id,
+                    fileName: file.name,
+                    pointers: existingSheet?.pointers.length 
+                        ? existingSheet.pointers  // Keep existing pointers if any
+                        : allPointers,
+                    addedToContext: true,
+                    markdownContent: existingSheet?.markdownContent || null,
+                    markdownGeneratedAt: existingSheet?.markdownGeneratedAt || null,
+                    generationStatus: existingSheet?.generationStatus || 'idle',
+                    generationError: existingSheet?.generationError,
+                };
+            }
+            
+            return updated;
+        });
+    }, []);
+
+    // Handler for clicking a box on the PDF - highlights the card and scrolls to it
+    const handleBoxClick = useCallback((pointerId: string) => {
+        setHoveredPointerId(pointerId);
+        setEditingPointerId(pointerId);
+        setIsAnnotationsPanelCollapsed(false);
+        
+        // Add to selection
+        setSelectedAnnotationIds(prev => {
+            const newSet = new Set(prev);
+            newSet.add(pointerId);
+            return newSet;
+        });
+        
+        // Clear highlight after a delay
+        setTimeout(() => {
+            setHoveredPointerId(null);
+        }, 2000);
+    }, []);
+
+    // Handler for hovering over a card in the annotations panel
+    const handlePointerHover = useCallback((pointerId: string | null) => {
+        setHoveredPointerId(pointerId);
+    }, []);
 
     // Check if current sheet is added to context
     const isCurrentSheetAddedToContext = currentSheet?.addedToContext ?? false;
@@ -2334,6 +2691,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                 pointers={currentPointers}
                                 onPointerCreate={handlePointerCreate}
                                 visibleRectangleIds={visibleRectangleIds}
+                                onBoxClick={handleBoxClick}
+                                highlightedPointerId={hoveredPointerId}
+                                navigateTarget={pdfNavigateTarget}
+                                onNavigateComplete={() => setPdfNavigateTarget(null)}
                             />
                         </div>
                         <AnnotationsPanel
@@ -2351,6 +2712,9 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                             onSelectedAnnotationIdsChange={setSelectedAnnotationIds}
                             isAddedToContext={isCurrentSheetAddedToContext}
                             onAddToContext={handleAddToContext}
+                            onPointerHover={handlePointerHover}
+                            onPointerClick={handleBoxClick}
+                            highlightedPointerId={hoveredPointerId}
                         />
                     </div>
                 );
@@ -2674,6 +3038,13 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
 
                 <div className="relative z-20 flex-shrink-0 flex items-center gap-4">
                     <button
+                        onClick={() => setIsUsersPanelOpen(!isUsersPanelOpen)}
+                        className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-8 flex items-center justify-center shadow-lg hover:border-emerald-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-emerald-500 focus:outline-none focus:ring-emerald-400"
+                        aria-expanded={isUsersPanelOpen}
+                    >
+                        <UsersLogo />
+                    </button>
+                    <button
                         onClick={() => setIsAgentsLauncherOpen(!isAgentsLauncherOpen)}
                         className="bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg h-[52px] px-8 flex items-center justify-center shadow-lg hover:border-cyan-500 transition-colors ring-2 ring-offset-2 ring-offset-gray-900 ring-cyan-500 focus:outline-none focus:ring-cyan-400"
                         aria-expanded={isAgentsLauncherOpen}
@@ -2748,6 +3119,7 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                                     onUploadDeviation={handleUploadDeviation}
                                     onUploadClash={handleUploadClash}
                                     onUploadProgress={handleUploadProgress}
+                                    onClearAllFiles={handleClearAllFiles}
                                     annotationCountByFileId={pointerCountByFileId}
                                 />
                             )}
@@ -2771,12 +3143,18 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                     {centerFileType === 'pdf' && (
                         <button
                             ref={pdfToolsButtonRef}
-                            onClick={() => setIsPdfToolsOpen(!isPdfToolsOpen)}
+                            onClick={() => {
+                                const newIsOpen = !isPdfToolsOpen;
+                                setIsPdfToolsOpen(newIsOpen);
+                                if (pdfToolbarHandlers) {
+                                    pdfToolbarHandlers.onToolChange(newIsOpen ? 'rectangle' : 'pen');
+                                }
+                            }}
                             className={`absolute top-4 right-4 z-20 p-2 backdrop-blur-sm text-white rounded-md border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500 transition-colors shadow-lg ${isPdfToolsOpen
                                 ? 'bg-cyan-600 border-cyan-500 hover:bg-cyan-700'
                                 : 'bg-gray-800/80 border-white/10 hover:bg-gray-700'
                                 }`}
-                            aria-label="Toggle PDF tools"
+                            aria-label="Toggle rectangle drawing mode"
                             aria-pressed={isPdfToolsOpen}
                             type="button"
                         >
@@ -2784,13 +3162,36 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         </button>
                     )}
 
-                    {/* PDF Tools Panel */}
+                    {/* PDF Zoom Controls Dropdown */}
                     {centerFileType === 'pdf' && isPdfToolsOpen && pdfToolbarHandlers && (
-                        <div ref={toolbarRef} className="absolute top-16 right-4 z-30 shadow-xl">
-                            <PdfToolsPanel
-                                {...pdfToolbarHandlers}
-                                onClose={() => setIsPdfToolsOpen(false)}
-                            />
+                        <div ref={toolbarRef} className="absolute top-16 right-4 z-30 flex flex-col gap-1 bg-gray-800/90 backdrop-blur-sm border border-gray-700/50 rounded-lg p-2 shadow-xl">
+                            <button
+                                onClick={pdfToolbarHandlers.onZoomIn}
+                                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                                aria-label="Zoom in"
+                                title="Zoom in"
+                                type="button"
+                            >
+                                <ZoomInIcon className="h-5 w-5" />
+                            </button>
+                            <button
+                                onClick={pdfToolbarHandlers.onZoomOut}
+                                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                                aria-label="Zoom out"
+                                title="Zoom out"
+                                type="button"
+                            >
+                                <ZoomOutIcon className="h-5 w-5" />
+                            </button>
+                            <button
+                                onClick={pdfToolbarHandlers.onZoomReset}
+                                className="p-2 rounded bg-gray-700 hover:bg-gray-600 text-white transition-colors"
+                                aria-label="Reset zoom"
+                                title="Reset zoom"
+                                type="button"
+                            >
+                                <ZoomResetIcon className="h-5 w-5" />
+                            </button>
                         </div>
                     )}
 
@@ -2802,6 +3203,12 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         onAgentStatesChange={setAgentStates}
                         isLauncherOpen={isAgentsLauncherOpen}
                         onLauncherOpenChange={setIsAgentsLauncherOpen}
+                    />
+
+                    <UserManagementPanel
+                        projectId={project.id}
+                        isOpen={isUsersPanelOpen}
+                        onClose={() => setIsUsersPanelOpen(false)}
                     />
 
                     {/* Report Overlay */}
@@ -2828,6 +3235,10 @@ const ProjectViewerPage: React.FC<ProjectViewerPageProps> = ({ project, onBack, 
                         onToggleCollapse={toggleMetricsPanel}
                         width={contextPanelWidth}
                         onWidthChange={setContextPanelWidth}
+                        projectId={project.id}
+                        selectedPlanId={centerFileType === 'pdf' ? currentFileBackendId : null}
+                        onPointerNavigate={handlePointerNavigate}
+                        onAddGlobalToContext={handleAddGlobalToContext}
                     />
                 )}
             </main>

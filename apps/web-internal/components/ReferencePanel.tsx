@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { ProjectSummary, Severity, Insight, InsightStatus, InsightType, FileSystemNode } from '../types';
-import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon, FolderIcon } from './Icons';
+import { DocumentIcon, ArrowDownTrayIcon, CloseIcon, PlusIcon, FolderIcon, TrashIcon } from './Icons';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { analyzeDeviationReport } from '../utils/gemini';
@@ -33,6 +33,8 @@ interface ReferencePanelProps {
   onUploadDeviation?: (file: File) => void;
   onUploadClash?: (file: File) => void;
   onUploadProgress?: (file: File) => void;
+  // Clear all files
+  onClearAllFiles?: () => void;
   // Annotation counts by file ID
   annotationCountByFileId?: Record<string, number>;
   
@@ -76,6 +78,7 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
   onUploadDeviation,
   onUploadClash,
   onUploadProgress,
+  onClearAllFiles,
   annotationCountByFileId,
   centerViewerFiles = [],
   selectedFileIndex = 0,
@@ -516,6 +519,20 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
                   <FolderIcon className="h-4 w-4" />
                   <span>New Folder</span>
                 </button>
+                {onClearAllFiles && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to delete all project files? This cannot be undone.')) {
+                        onClearAllFiles();
+                      }
+                    }}
+                    className="flex items-center gap-2 px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 hover:text-red-300 rounded-lg border border-red-900/30 hover:border-red-700/50 transition-all text-xs font-bold uppercase tracking-wide"
+                    title="Delete all project files from database"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                    <span>Clear All</span>
+                  </button>
+                )}
               </div>
             )}
 

@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Project, Batch, ProcessedPointer
+from ..models import Project, Batch, ProcessedPointer, ContextPointer, ProjectFile
 from ..schemas import (
     BatchCreate, BatchUpdate, BatchResponse, BatchSummaryResponse, BatchDetailResponse,
-    ProcessedPointerCreate, ProcessedPointerBulkCreate, ProcessedPointerResponse
+    ProcessedPointerCreate, ProcessedPointerBulkCreate, ProcessedPointerResponse,
+    BatchCommitResponse, BatchCommitRequest
 )
 
 router = APIRouter()
@@ -137,6 +138,157 @@ def complete_batch(batch_id: str, db: Session = Depends(get_db)):
     db.refresh(batch)
     
     return batch
+
+
+@router.post("/batches/commit", response_model=BatchCommitResponse)
+def commit_batch(request: BatchCommitRequest, db: Session = Depends(get_db)):
+    """
+    Commit a batch by creating ContextPointer records from provided n8n processed data.
+    
+    This accepts the batch data directly from the frontend (which gets it from the
+    Node.js n8n API) rather than looking it up in the database.
+    """
+    # Verify project exists
+    project = db.query(Project).filter(Project.id == request.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Build mapping from sheet_id -> actual file_id
+    # First try by ID, then fall back to file name matching
+    sheet_to_file_id = {}
+    
+    # Collect sheet IDs and file names
+    sheet_ids = set(sheet.sheet_id for sheet in request.sheets)
+    sheet_names = {sheet.sheet_id: sheet.file_name for sheet in request.sheets}
+    
+    # Try to find files by ID first
+    files_by_id = db.query(ProjectFile).filter(
+        ProjectFile.id.in_(sheet_ids),
+        ProjectFile.project_id == request.project_id
+    ).all()
+    for f in files_by_id:
+        sheet_to_file_id[f.id] = f.id
+    
+    # For sheets not found by ID, try to find by file name
+    missing_sheet_ids = sheet_ids - set(sheet_to_file_id.keys())
+    if missing_sheet_ids:
+        missing_names = [sheet_names[sid] for sid in missing_sheet_ids]
+        files_by_name = db.query(ProjectFile).filter(
+            ProjectFile.name.in_(missing_names),
+            ProjectFile.project_id == request.project_id
+        ).all()
+        name_to_file = {f.name: f.id for f in files_by_name}
+        
+        for sheet_id in missing_sheet_ids:
+            file_name = sheet_names[sheet_id]
+            if file_name in name_to_file:
+                sheet_to_file_id[sheet_id] = name_to_file[file_name]
+    
+    # Check if any sheets are still missing
+    still_missing = sheet_ids - set(sheet_to_file_id.keys())
+    if still_missing:
+        missing_info = [f"{sid} ({sheet_names.get(sid, 'unknown')})" for sid in list(still_missing)[:5]]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Some sheets do not exist as ProjectFiles (by ID or name): {missing_info}"
+        )
+    
+    # Create ContextPointer records from the provided data
+    created_count = 0
+    for sheet in request.sheets:
+        # Look up the actual file ID (may have been matched by name)
+        actual_file_id = sheet_to_file_id.get(sheet.sheet_id)
+        if not actual_file_id:
+            continue  # Skip if file not found (shouldn't happen after validation)
+        
+        for pointer in sheet.pointers:
+            # Build description from AI analysis
+            ai_data = {
+                "technicalDescription": pointer.ai_analysis.technical_description,
+                "identifiedElements": pointer.ai_analysis.identified_elements,
+                "tradeCategory": pointer.ai_analysis.trade_category,
+                "measurements": pointer.ai_analysis.measurements,
+                "issues": pointer.ai_analysis.issues,
+                "recommendations": pointer.ai_analysis.recommendations,
+            }
+            description = _format_ai_analysis(ai_data)
+            
+            # Use AI-enhanced title (first 100 chars of technical description)
+            title = pointer.original_metadata.title or "Untitled"
+            if pointer.ai_analysis.technical_description:
+                tech_desc = pointer.ai_analysis.technical_description
+                title = tech_desc[:100] + ("..." if len(tech_desc) > 100 else "")
+            
+            # Create ContextPointer with default full-page bounds
+            context_pointer = ContextPointer(
+                file_id=actual_file_id,
+                page_number=pointer.original_metadata.page_number or 1,
+                bounds_x=0.0,
+                bounds_y=0.0,
+                bounds_w=1.0,
+                bounds_h=1.0,
+                style_color="#ff0000",
+                style_stroke_width=2,
+                title=title,
+                description=description,
+                snapshot_data_url=None,
+            )
+            db.add(context_pointer)
+            created_count += 1
+    
+    db.commit()
+    
+    return BatchCommitResponse(
+        batch_id=request.batch_id,
+        pointers_created=created_count,
+        status="committed"
+    )
+
+
+def _format_ai_analysis(ai_analysis: dict | None) -> str:
+    """Format AI analysis into a readable description for the ContextPointer."""
+    if not ai_analysis or not isinstance(ai_analysis, dict):
+        return ""
+    
+    parts = []
+    
+    # Technical description
+    if ai_analysis.get("technicalDescription"):
+        parts.append(ai_analysis["technicalDescription"])
+    
+    # Identified elements
+    elements = ai_analysis.get("identifiedElements", [])
+    if elements:
+        element_strs = []
+        for elem in elements:
+            if isinstance(elem, str):
+                element_strs.append(elem)
+            elif isinstance(elem, dict) and "symbol" in elem:
+                element_strs.append(f"{elem.get('symbol')}: {elem.get('meaning', '')}")
+        if element_strs:
+            parts.append("Elements: " + ", ".join(element_strs))
+    
+    # Trade category
+    if ai_analysis.get("tradeCategory"):
+        parts.append(f"Trade: {ai_analysis['tradeCategory']}")
+    
+    # Measurements
+    measurements = ai_analysis.get("measurements", [])
+    if measurements:
+        meas_strs = [f"{m.get('element')}: {m.get('value')} {m.get('unit', '')}" for m in measurements]
+        parts.append("Measurements: " + ", ".join(meas_strs))
+    
+    # Issues
+    issues = ai_analysis.get("issues", [])
+    if issues:
+        issue_strs = [f"[{i.get('severity', 'info')}] {i.get('description', '')}" for i in issues]
+        parts.append("Issues: " + "; ".join(issue_strs))
+    
+    # Recommendations
+    if ai_analysis.get("recommendations"):
+        parts.append(f"Recommendations: {ai_analysis['recommendations']}")
+    
+    return "\n\n".join(parts)
 
 
 # =============================================================================

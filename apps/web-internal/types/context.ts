@@ -1,3 +1,5 @@
+export type ContextPointerStatus = 'generating' | 'complete' | 'error';
+
 export interface ContextPointer {
   id: string;
   pageNumber: number;
@@ -19,6 +21,10 @@ export interface ContextPointer {
 
   snapshotDataUrl: string | null;
   createdAt: string;
+
+  // Status for AI generation tracking
+  status?: ContextPointerStatus;
+  errorMessage?: string;
 }
 
 export interface SheetContext {

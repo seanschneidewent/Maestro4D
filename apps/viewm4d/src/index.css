@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+/* Ensure smooth sidebar transitions */
+.sidebar-transition {
+  transition: transform 200ms ease-in-out;
+}
+
+/* Prevent body scroll when mobile sidebar is open */
+body.sidebar-open {
+  overflow: hidden;
+}
+
+

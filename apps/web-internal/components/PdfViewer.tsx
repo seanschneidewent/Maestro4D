@@ -38,6 +38,17 @@ export interface PdfToolbarHandlers {
   effectiveFontSize: number;
 }
 
+// Navigation target for scrolling to a specific page and zooming to bounds
+export interface PdfNavigateTarget {
+  pageNumber: number;
+  bounds?: {
+    xNorm: number;
+    yNorm: number;
+    wNorm: number;
+    hNorm: number;
+  };
+}
+
 interface PdfViewerProps {
   pdfUrl?: string;
   onPdfUpload?: (url: string) => void;
@@ -52,6 +63,12 @@ interface PdfViewerProps {
   pointers?: ContextPointer[];
   onPointerCreate?: (pointer: Omit<ContextPointer, 'title' | 'description'>) => void;
   visibleRectangleIds?: Set<string>;
+  // Box interaction callbacks
+  onBoxClick?: (pointerId: string) => void;
+  highlightedPointerId?: string | null;
+  // Navigation target for scrolling to page and zooming to bounds
+  navigateTarget?: PdfNavigateTarget | null;
+  onNavigateComplete?: () => void;
 }
 
 export type Tool = 'pen' | 'text' | 'arrow' | 'rectangle';
@@ -166,7 +183,7 @@ const TextAnnotationEditor: React.FC<TextAnnotationEditorProps> = ({
   );
 };
 
-const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef, pointers, onPointerCreate, visibleRectangleIds }) => {
+const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations, onAnnotationsChange, isToolsOpen: controlledIsToolsOpen, onToolsOpenChange, onToolbarHandlersReady, renderToolbarExternally, toolbarRef, pointers, onPointerCreate, visibleRectangleIds, onBoxClick, highlightedPointerId, navigateTarget, onNavigateComplete }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isPanningRef = useRef(false);
@@ -363,6 +380,128 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
   }, [pdfUrl]); // Only depend on pdfUrl to avoid update loop with annotations prop
 
+  // Handle navigation target - scroll to page and zoom to fit bounds
+  useEffect(() => {
+    if (!navigateTarget || !scrollContainerRef.current || numPages === 0) return;
+
+    const { pageNumber, bounds } = navigateTarget;
+    
+    // Validate page number
+    if (pageNumber < 1 || pageNumber > numPages) {
+      console.warn('Invalid page number for navigation:', pageNumber);
+      onNavigateComplete?.();
+      return;
+    }
+
+    // Find the page element
+    const pageElement = scrollContainerRef.current.querySelector(
+      `[data-page-number="${pageNumber}"]`
+    ) as HTMLElement;
+
+    if (!pageElement) {
+      // Page might not be rendered yet, try again after a short delay
+      const timer = setTimeout(() => {
+        const retryPageElement = scrollContainerRef.current?.querySelector(
+          `[data-page-number="${pageNumber}"]`
+        ) as HTMLElement;
+        
+        if (retryPageElement) {
+          performNavigation(retryPageElement, bounds);
+        } else {
+          onNavigateComplete?.();
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+
+    performNavigation(pageElement, bounds);
+
+    function performNavigation(
+      pageEl: HTMLElement, 
+      targetBounds?: { xNorm: number; yNorm: number; wNorm: number; hNorm: number }
+    ) {
+      if (!scrollContainerRef.current) {
+        onNavigateComplete?.();
+        return;
+      }
+
+      // Update current page
+      setCurrentPage(pageNumber);
+
+      if (targetBounds) {
+        // Use base dimensions for consistent zoom calculation regardless of current scale
+        const baseDims = basePageDimensionsRef.current[pageNumber];
+        const baseW = baseDims?.width || (baseWidthRef.current || 800);
+        const baseH = baseDims?.height || (baseW * 1.414);
+        
+        // Calculate displayScale (same formula used in rendering)
+        const currentDisplayScale = baseWidthRef.current ? (containerWidth / baseWidthRef.current) : 1;
+        
+        // Calculate the bounds size at scale=1 (in pixels)
+        const boundsWidthBase = targetBounds.wNorm * baseW * currentDisplayScale;
+        const boundsHeightBase = targetBounds.hNorm * baseH * currentDisplayScale;
+
+        // Calculate zoom to fit bounds with 20% padding
+        const viewportWidth = scrollContainerRef.current.clientWidth;
+        const viewportHeight = scrollContainerRef.current.clientHeight;
+        const paddingFactor = 1.4; // 20% padding on each side
+        
+        const zoomX = viewportWidth / (boundsWidthBase * paddingFactor);
+        const zoomY = viewportHeight / (boundsHeightBase * paddingFactor);
+        const newScale = Math.min(Math.max(zoomX, zoomY, 1), 4); // Clamp between 1x and 4x
+
+        // Apply zoom
+        setScale(newScale);
+
+        // Wait for React state update and DOM to reflect new scale
+        // Use double requestAnimationFrame to ensure DOM has fully updated
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!scrollContainerRef.current) {
+              onNavigateComplete?.();
+              return;
+            }
+            
+            const updatedPageEl = scrollContainerRef.current.querySelector(
+              `[data-page-number="${pageNumber}"]`
+            ) as HTMLElement;
+            
+            if (!updatedPageEl) {
+              onNavigateComplete?.();
+              return;
+            }
+
+            const updatedPageWidth = updatedPageEl.offsetWidth;
+            const updatedPageHeight = updatedPageEl.offsetHeight;
+            
+            // Calculate center point of the bounds in page coordinates (at new scale)
+            const boundsCenterX = (targetBounds.xNorm + targetBounds.wNorm / 2) * updatedPageWidth;
+            const boundsCenterY = (targetBounds.yNorm + targetBounds.hNorm / 2) * updatedPageHeight;
+
+            // Calculate scroll position to center bounds in viewport
+            const containerRect = scrollContainerRef.current!.getBoundingClientRect();
+            
+            const scrollLeft = updatedPageEl.offsetLeft + boundsCenterX - containerRect.width / 2;
+            const scrollTop = updatedPageEl.offsetTop + boundsCenterY - containerRect.height / 2;
+
+            scrollContainerRef.current!.scrollTo({
+              left: Math.max(0, scrollLeft),
+              top: Math.max(0, scrollTop),
+              behavior: 'smooth'
+            });
+            
+            // Call onNavigateComplete after scroll is initiated
+            onNavigateComplete?.();
+          });
+        });
+      } else {
+        // No bounds - just scroll to the page
+        pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        onNavigateComplete?.();
+      }
+    }
+  }, [navigateTarget, numPages, onNavigateComplete, containerWidth]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -480,23 +619,31 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       const w = pointer.bounds.wNorm * canvas.width;
       const h = pointer.bounds.hNorm * canvas.height;
 
+      const isHighlighted = pointer.id === highlightedPointerId;
+
       ctx.beginPath();
 
-      // Create radial gradient for stroke
-      const centerX = x + w / 2;
-      const centerY = y + h / 2;
-      const radius = Math.sqrt(w * w + h * h) / 2;
+      if (isHighlighted) {
+        // Highlighted: more prominent styling with fill and thicker stroke
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.15)'; // Cyan fill with low opacity
+        ctx.fillRect(x, y, w, h);
+        
+        ctx.strokeStyle = '#22d3ee'; // Bright cyan
+        ctx.lineWidth = pointer.style.strokeWidth + 2;
+        ctx.setLineDash([]); // Solid line
+      } else {
+        // Normal: gradient stroke only
+        const gradient = ctx.createLinearGradient(x, y, x + w, y + h);
+        gradient.addColorStop(0, '#3b82f6'); // Blue
+        gradient.addColorStop(1, '#06b6d4'); // Cyan
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = pointer.style.strokeWidth;
+      }
 
-      const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
-      gradient.addColorStop(0, '#3b82f6'); // Blue
-      gradient.addColorStop(1, '#06b6d4'); // Cyan
-
-      ctx.strokeStyle = gradient;
-      ctx.lineWidth = pointer.style.strokeWidth;
       ctx.globalCompositeOperation = 'source-over';
       ctx.strokeRect(x, y, w, h);
     });
-  }, [pageAnnotations, pointers, visibleRectangleIds]);
+  }, [pageAnnotations, pointers, visibleRectangleIds, highlightedPointerId]);
 
   // Initialize overlay canvas size once at base dimensions
   const initBaseSize = useCallback((pageNumber: number) => {
@@ -706,6 +853,22 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     return { xNorm: anchor.x, yNorm: anchor.y };
   }, []);
 
+  // Check if a point is inside a pointer's bounding box
+  const findPointerAtPoint = useCallback((pageNumber: number, xNorm: number, yNorm: number): string | null => {
+    const pagePointers = (pointers || []).filter(p => p.pageNumber === pageNumber);
+    
+    // Check from last to first (top-most first in visual order)
+    for (let i = pagePointers.length - 1; i >= 0; i--) {
+      const pointer = pagePointers[i];
+      const { xNorm: bx, yNorm: by, wNorm: bw, hNorm: bh } = pointer.bounds;
+      
+      if (xNorm >= bx && xNorm <= bx + bw && yNorm >= by && yNorm <= by + bh) {
+        return pointer.id;
+      }
+    }
+    return null;
+  }, [pointers]);
+
   // Start drawing, text draft, or panning
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>, pageNumber: number) => {
     // Handle right-click panning (only when zoomed in)
@@ -721,7 +884,18 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
       return;
     }
 
-    if (!isAnnotationEnabled) return;
+    // When annotation is not enabled, check for clicks on existing boxes
+    if (!isAnnotationEnabled) {
+      const point = getNormalizedPoint(e, pageNumber);
+      if (point && onBoxClick) {
+        const clickedPointerId = findPointerAtPoint(pageNumber, point.xNorm, point.yNorm);
+        if (clickedPointerId) {
+          e.preventDefault();
+          onBoxClick(clickedPointerId);
+        }
+      }
+      return;
+    }
 
     e.preventDefault();
     const point = getNormalizedPoint(e, pageNumber);
@@ -1815,6 +1989,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
               return (
                 <div
                   key={`page_${pageNum}`}
+                  data-page-number={pageNum}
                   ref={(el) => {
                     if (el) pageContainerRefs.current[pageNum] = el;
                   }}

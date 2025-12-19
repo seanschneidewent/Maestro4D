@@ -66,6 +66,19 @@ def list_project_files(project_id: str, db: Session = Depends(get_db)):
     return files
 
 
+@router.delete("/projects/{project_id}/files", status_code=204)
+def delete_all_project_files(project_id: str, db: Session = Depends(get_db)):
+    """Delete all files for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Delete all project files (cascade will handle related records like context pointers)
+    db.query(ProjectFile).filter(ProjectFile.project_id == project_id).delete()
+    db.commit()
+    return None
+
+
 @router.get("/projects/{project_id}/files/tree", response_model=List[ProjectFileTreeNode])
 def get_project_file_tree(project_id: str, db: Session = Depends(get_db)):
     """Get project files as a tree structure."""
@@ -121,10 +134,10 @@ async def upload_project_file(
     # Get file size
     file_size = os.path.getsize(file_path)
     
-    # Create database record
+    # Create database record - use Path().name to extract just the filename, stripping any path
     db_file = ProjectFile(
         project_id=project_id,
-        name=file.filename,
+        name=Path(file.filename).name,
         path=str(file_path),
         file_type=file_type,
         size=file_size,
@@ -300,10 +313,10 @@ async def upload_scan_file(
     # Get file size
     file_size = os.path.getsize(file_path)
     
-    # Create database record
+    # Create database record - use Path().name to extract just the filename, stripping any path
     db_file = ScanFile(
         scan_id=scan_id,
-        name=file.filename,
+        name=Path(file.filename).name,
         path=str(file_path),
         file_type=file_type,
         size=file_size,

@@ -1,12 +1,15 @@
 """
 FastAPI application entry point with CORS, lifespan, and router configuration.
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import projects, scans, files, context, batches, insights, agents
+from .routers import projects, scans, files, context, batches, insights, agents, users, queries, ai_processing
 from .schemas import HealthResponse
 
 
@@ -58,6 +61,9 @@ app.include_router(context.router, prefix="/api", tags=["Context"])
 app.include_router(batches.router, prefix="/api", tags=["Batches"])
 app.include_router(insights.router, prefix="/api", tags=["Insights"])
 app.include_router(agents.router, prefix="/api", tags=["Agents"])
+app.include_router(users.router, prefix="/api", tags=["Users"])
+app.include_router(queries.router, prefix="/api", tags=["Queries"])
+app.include_router(ai_processing.router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["Health"])

@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..models import Project
+from ..models import Project, User, UserProject
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectDetailResponse,
-    ScanResponse, ProjectFileResponse, AgentStateResponse, BatchSummaryResponse
+    ScanResponse, ProjectFileResponse, AgentStateResponse, BatchSummaryResponse,
+    UserResponse
 )
 
 router = APIRouter()
@@ -112,4 +113,22 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     db.delete(db_project)
     db.commit()
     return None
+
+
+@router.get("/projects/{project_id}/users", response_model=List[UserResponse])
+def list_project_users(project_id: str, db: Session = Depends(get_db)):
+    """List all users assigned to a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Get user IDs from assignments
+    assignments = db.query(UserProject).filter(UserProject.project_id == project_id).all()
+    user_ids = [a.user_id for a in assignments]
+    
+    if not user_ids:
+        return []
+    
+    users = db.query(User).filter(User.id.in_(user_ids)).order_by(User.name).all()
+    return users
 

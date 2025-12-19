@@ -2,6 +2,9 @@
 """
 Uvicorn startup script for Maestro4D Web Internal API.
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 import uvicorn
 
 if __name__ == "__main__":
