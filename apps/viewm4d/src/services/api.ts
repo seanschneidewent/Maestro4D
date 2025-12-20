@@ -1,4 +1,7 @@
 import type {
+  AgentMessage,
+  AgentSession,
+  AgentSessionSummary,
   ContextPointer,
   EnhancedQueryResponse,
   ProjectFile,
@@ -9,7 +12,8 @@ import type {
   UserWithProjects,
 } from '../types';
 
-const API_BASE = 'http://localhost:8000/api';
+// Use relative URL - Vite proxy forwards /api/* to backend
+const API_BASE = '/api';
 
 function toErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -46,9 +50,11 @@ class ApiService {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
+    const fullUrl = `${API_BASE}${path}`;
+
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      res = await fetch(fullUrl, { ...options, headers });
     } catch (fetchError) {
       throw fetchError;
     }
@@ -159,6 +165,43 @@ class ApiService {
 
   async getContextPointers(fileId: string) {
     return this.request<ContextPointer[]>(`/files/${fileId}/pointers`);
+  }
+
+  // Agent Sessions
+
+  async getAgentSessions(projectId: string): Promise<AgentSessionSummary[]> {
+    return this.request<AgentSessionSummary[]>(`/agent/sessions?projectId=${projectId}`);
+  }
+
+  async createAgentSession(projectId: string): Promise<AgentSession> {
+    return this.request<AgentSession>('/agent/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ projectId }),
+    });
+  }
+
+  async getAgentSession(sessionId: string): Promise<AgentSession> {
+    return this.request<AgentSession>(`/agent/sessions/${sessionId}`);
+  }
+
+  async deleteAgentSession(sessionId: string): Promise<void> {
+    return this.request<void>(`/agent/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateAgentSession(sessionId: string, title: string): Promise<AgentSession> {
+    return this.request<AgentSession>(`/agent/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  async sendAgentMessage(sessionId: string, query: string): Promise<AgentMessage> {
+    return this.request<AgentMessage>(`/agent/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    });
   }
 
   async downloadFile(fileId: string) {

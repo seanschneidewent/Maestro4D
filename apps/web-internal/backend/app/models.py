@@ -35,6 +35,7 @@ class Project(Base):
     batches = relationship("Batch", back_populates="project", cascade="all, delete-orphan")
     assigned_users = relationship("UserProject", back_populates="project", cascade="all, delete-orphan")
     queries = relationship("Query", back_populates="project", cascade="all, delete-orphan")
+    agent_sessions = relationship("AgentSession", back_populates="project", cascade="all, delete-orphan")
 
 
 class Scan(Base):
@@ -260,6 +261,7 @@ class User(Base):
     # Relationships
     project_assignments = relationship("UserProject", back_populates="user", cascade="all, delete-orphan")
     queries = relationship("Query", back_populates="user", cascade="all, delete-orphan")
+    agent_sessions = relationship("AgentSession", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProject(Base):
@@ -309,5 +311,58 @@ class QueryResult(Base):
 
     # Relationships
     query = relationship("Query", back_populates="results")
+    context_pointer = relationship("ContextPointer")
+
+
+# =============================================================================
+# Agent Session Models (ViewM4D conversational agent)
+# =============================================================================
+
+class AgentSession(Base):
+    """Agent session model - multi-turn conversation session for ViewM4D agent."""
+    __tablename__ = "agent_sessions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    title = Column(String, nullable=True)  # Auto-generated from first message
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="agent_sessions")
+    project = relationship("Project", back_populates="agent_sessions")
+    messages = relationship("AgentMessage", back_populates="session", cascade="all, delete-orphan", order_by="AgentMessage.created_at")
+
+
+class AgentMessage(Base):
+    """Agent message model - individual message in an agent session."""
+    __tablename__ = "agent_messages"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    session_id = Column(String, ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String, nullable=False)  # 'user' or 'agent'
+    content = Column(Text, nullable=False)  # User's question OR agent's short answer
+    narrative = Column(Text, nullable=True)  # Agent only: full response for viewer overlay
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    session = relationship("AgentSession", back_populates="messages")
+    pointers = relationship("AgentMessagePointer", back_populates="message", cascade="all, delete-orphan")
+
+
+class AgentMessagePointer(Base):
+    """Agent message pointer model - links agent messages to context pointers."""
+    __tablename__ = "agent_message_pointers"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    message_id = Column(String, ForeignKey("agent_messages.id", ondelete="CASCADE"), nullable=False)
+    context_pointer_id = Column(String, ForeignKey("context_pointers.id"), nullable=False)
+    sheet_id = Column(String, nullable=False)  # Denormalized for efficient display
+    sheet_name = Column(String, nullable=False)  # Denormalized for efficient display
+    reason = Column(Text, nullable=True)  # Why agent selected this pointer
+
+    # Relationships
+    message = relationship("AgentMessage", back_populates="pointers")
     context_pointer = relationship("ContextPointer")
 

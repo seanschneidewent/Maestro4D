@@ -121,3 +121,61 @@ export interface QueryResults {
 export interface QueryHistoryItem extends Query {
   results?: QueryResults;
 }
+
+// Agent session summary (for history list)
+export interface AgentSessionSummary {
+  id: string;
+  projectId: string;
+  title: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Full agent session with messages
+export interface AgentSession {
+  id: string;
+  projectId: string;
+  title: string | null;
+  messages: AgentMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Individual message in a session
+export interface AgentMessage {
+  id: string;
+  role: 'user' | 'agent';
+  content: string;              // User question OR agent short answer
+  narrative?: string;           // Agent only: full response for viewer overlay
+  sheets?: AgentSheetResult[];  // Agent only: grouped pointers by sheet
+  createdAt: string;
+}
+
+// Sheet with its relevant pointers
+export interface AgentSheetResult {
+  sheetId: string;
+  sheetName: string;
+  pointers: AgentPointerResult[];
+}
+
+// Individual pointer result
+export interface AgentPointerResult {
+  id: string;
+  reason: string;
+}
+
+// API request for creating a message
+export interface AgentMessageRequest {
+  query: string;
+}
+
+// API request for creating a session
+export interface AgentSessionCreateRequest {
+  projectId: string;
+}
+
+// API request for updating session
+export interface AgentSessionUpdateRequest {
+  title: string;
+}

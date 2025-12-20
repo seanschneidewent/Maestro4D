@@ -380,6 +380,25 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfUrl, onPdfUpload, annotations,
     }
   }, [pdfUrl]); // Only depend on pdfUrl to avoid update loop with annotations prop
 
+  // Reset scroll position to top-left when PDF first loads
+  useEffect(() => {
+    if (!pdfUrl || !pdfLoaded || numPages === 0 || !scrollContainerRef.current) return;
+    
+    // Wait for the document to render before scrolling
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTo({
+            left: 0,
+            top: 0,
+            behavior: 'instant' // Use 'instant' for immediate positioning without animation
+          });
+        }
+      });
+    });
+  }, [pdfUrl, pdfLoaded, numPages]); // Reset scroll when PDF URL changes or document loads
+
   // Handle navigation target - scroll to page and zoom to fit bounds
   useEffect(() => {
     if (!navigateTarget || !scrollContainerRef.current || numPages === 0) return;

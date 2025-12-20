@@ -927,6 +927,111 @@ class HealthResponse(BaseModel):
     status: str
 
 
+# =============================================================================
+# Agent Session Schemas (ViewM4D conversational agent)
+# =============================================================================
+
+# Request schemas
+class AgentSessionCreate(BaseModel):
+    """Create a new agent session."""
+    project_id: str = Field(alias="projectId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class AgentSessionUpdate(BaseModel):
+    """Update an agent session (e.g., rename title)."""
+    title: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class AgentMessageCreate(BaseModel):
+    """Create a new message in an agent session."""
+    query: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+# Response schemas (building blocks first, then composite)
+class AgentPointerResult(BaseModel):
+    """Individual pointer result from agent response."""
+    id: str
+    reason: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class AgentSheetResult(BaseModel):
+    """Sheet with grouped pointers from agent response."""
+    sheet_id: str = Field(alias="sheetId")
+    sheet_name: str = Field(alias="sheetName")
+    pointers: List[AgentPointerResult] = []
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class AgentMessageResponse(BaseModel):
+    """Individual message in an agent session."""
+    id: str
+    role: str  # 'user' or 'agent'
+    content: str
+    narrative: Optional[str] = None
+    sheets: List[AgentSheetResult] = []
+    created_at: datetime = Field(alias="createdAt")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @classmethod
+    def from_orm_model(cls, message):
+        """Convert from ORM model, grouping pointers by sheet."""
+        # Group pointers by sheet_id
+        sheets_map: Dict[str, AgentSheetResult] = {}
+        for pointer in message.pointers:
+            if pointer.sheet_id not in sheets_map:
+                sheets_map[pointer.sheet_id] = AgentSheetResult(
+                    sheet_id=pointer.sheet_id,
+                    sheet_name=pointer.sheet_name,
+                    pointers=[]
+                )
+            sheets_map[pointer.sheet_id].pointers.append(
+                AgentPointerResult(id=pointer.context_pointer_id, reason=pointer.reason)
+            )
+
+        return cls(
+            id=message.id,
+            role=message.role,
+            content=message.content,
+            narrative=message.narrative,
+            sheets=list(sheets_map.values()),
+            created_at=message.created_at,
+        )
+
+
+class AgentSessionSummary(BaseModel):
+    """Summary of an agent session for list views."""
+    id: str
+    title: Optional[str] = None
+    project_id: str = Field(alias="projectId")
+    message_count: int = Field(alias="messageCount")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class AgentSessionResponse(BaseModel):
+    """Full agent session with messages."""
+    id: str
+    title: Optional[str] = None
+    project_id: str = Field(alias="projectId")
+    messages: List[AgentMessageResponse] = []
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
 # Update forward references for nested models
 UserWithProjectsResponse.model_rebuild()
 QueryWithResultsResponse.model_rebuild()
@@ -938,4 +1043,6 @@ BatchDetailResponse.model_rebuild()
 SheetContextWithPointersResponse.model_rebuild()
 EnhancedQueryResponse.model_rebuild()
 PageContextWithPointersResponse.model_rebuild()
+AgentSessionResponse.model_rebuild()
+AgentMessageResponse.model_rebuild()
 

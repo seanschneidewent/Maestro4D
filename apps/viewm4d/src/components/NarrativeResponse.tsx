@@ -7,7 +7,7 @@ export function NarrativeResponse({ narrative, onDismiss }: Props) {
   if (!narrative) return null;
 
   return (
-    <div className="absolute bottom-4 left-4 right-4 bg-white border border-slate-200 rounded-lg p-4 shadow-lg">
+    <div className="bg-white border-t border-slate-200 px-4 py-3">
       <div className="flex items-start gap-3">
         <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
           <svg
