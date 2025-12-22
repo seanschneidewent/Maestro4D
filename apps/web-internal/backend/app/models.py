@@ -123,6 +123,7 @@ class ContextPointer(Base):
     ai_trade_category = Column(String, nullable=True)
     ai_elements = Column(JSON, nullable=True)  # List of identified elements
     ai_recommendations = Column(Text, nullable=True)
+    text_content = Column(JSON, nullable=True)  # Stores extracted text with positions from PDF region
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

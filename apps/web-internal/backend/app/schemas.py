@@ -226,6 +226,7 @@ class ContextPointerResponse(BaseModel):
     title: str
     description: Optional[str] = None
     snapshot_data_url: Optional[str] = Field(None, alias="snapshotDataUrl")
+    text_content: Optional[Dict[str, Any]] = Field(None, alias="textContent")
     committed_at: Optional[datetime] = Field(None, alias="committedAt")
     created_at: datetime = Field(alias="createdAt")
 
@@ -251,6 +252,7 @@ class ContextPointerResponse(BaseModel):
             title=obj.title,
             description=obj.description,
             snapshot_data_url=obj.snapshot_data_url,
+            text_content=obj.text_content,
             committed_at=obj.committed_at,
             created_at=obj.created_at,
         )
@@ -962,6 +964,27 @@ class AgentPointerResult(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class TextHighlightBbox(BaseModel):
+    """Normalized bounding box for text highlight (0-1 relative to pointer bounds)."""
+    x: float
+    y: float
+    width: float
+    height: float
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TextHighlight(BaseModel):
+    """Text highlight from agent response matching pointer text content."""
+    pointer_id: str = Field(alias="pointerId")
+    bbox_normalized: TextHighlightBbox = Field(alias="bboxNormalized")
+    matched_text: str = Field(alias="matchedText")
+    score: float
+    match_type: str = Field(alias="matchType")  # "substring", "fuzzy", or "token_overlap"
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class AgentSheetResult(BaseModel):
     """Sheet with grouped pointers from agent response."""
     sheet_id: str = Field(alias="sheetId")
@@ -978,6 +1001,7 @@ class AgentMessageResponse(BaseModel):
     content: str
     narrative: Optional[str] = None
     sheets: List[AgentSheetResult] = []
+    highlights: Optional[List[Dict[str, Any]]] = None  # Text highlights from agent response
     created_at: datetime = Field(alias="createdAt")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

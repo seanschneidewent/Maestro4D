@@ -4,6 +4,7 @@ import { EdgeToggleButton } from '../components/EdgeToggleButton';
 import { FileTree } from '../components/FileTree';
 import { PlanViewer } from '../components/PlanViewer';
 import { useAuth } from '../contexts/AuthContext';
+import type { TextHighlight } from '../types';
 
 export function ViewerPage() {
   const { user, logout } = useAuth();
@@ -14,6 +15,9 @@ export function ViewerPage() {
 
   // Active pointers from agent conversation (accumulates across messages)
   const [activePointerIds, setActivePointerIds] = useState<string[]>([]);
+
+  // Active text highlights from agent conversation
+  const [activeHighlights, setActiveHighlights] = useState<TextHighlight[]>([]);
 
   // Narrative response for center panel overlay
   const [currentNarrative, setCurrentNarrative] = useState<string | null>(null);
@@ -37,8 +41,11 @@ export function ViewerPage() {
   }, []);
 
   // Handle active pointers change from AgentPanel
-  const handleActivePointersChange = useCallback((pointerIds: string[]) => {
+  const handleActivePointersChange = useCallback((pointerIds: string[], highlights?: TextHighlight[]) => {
     setActivePointerIds(pointerIds);
+    if (highlights) {
+      setActiveHighlights(prev => [...prev, ...highlights]);
+    }
   }, []);
 
   // Handle narrative change from AgentPanel
@@ -97,6 +104,7 @@ export function ViewerPage() {
           fileId={selectedFileId}
           highlightedPointerId={highlightedPointerId}
           activePointerIds={activePointerIds}
+          activeHighlights={activeHighlights}
           narrative={isRightActive ? currentNarrative : null}
           onDismissNarrative={handleDismissNarrative}
           showHeader={isLeftActive}

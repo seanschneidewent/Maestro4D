@@ -330,6 +330,76 @@ def _crop_pdf_page(
     return png_bytes
 
 
+def _extract_text_from_region(
+    pdf_path: str,
+    page_num: int,
+    bbox: HighlightBbox,
+) -> dict:
+    """
+    Extract text and bounding boxes from a specific region of a PDF page.
+    
+    Args:
+        pdf_path: Path to PDF file
+        page_num: 0-indexed page number
+        bbox: Normalized bounds with x, y, width, height where values are 0-1
+    
+    Returns:
+        Dict with full_text, text_elements array, and clip_rect
+    """
+    import fitz  # PyMuPDF
+    
+    doc = fitz.open(pdf_path)
+    page = doc[page_num]
+    
+    # Get actual page dimensions
+    actual_width = page.rect.width
+    actual_height = page.rect.height
+    
+    # Convert normalized coords to PDF points
+    x0 = bbox.x * actual_width
+    y0 = bbox.y * actual_height
+    x1 = x0 + (bbox.width * actual_width)
+    y1 = y0 + (bbox.height * actual_height)
+    
+    clip_rect = fitz.Rect(x0, y0, x1, y1)
+    
+    # Extract text blocks with positions
+    text_dict = page.get_text("dict", clip=clip_rect)
+    
+    text_elements = []
+    for block in text_dict.get("blocks", []):
+        if block.get("type") == 0:  # text block
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if span["text"].strip():  # skip empty spans
+                        # Store bbox in absolute PDF coordinates
+                        text_elements.append({
+                            "text": span["text"],
+                            "bbox": {
+                                "x0": span["bbox"][0],
+                                "y0": span["bbox"][1],
+                                "x1": span["bbox"][2],
+                                "y1": span["bbox"][3]
+                            },
+                            "font": span.get("font", ""),
+                            "size": span.get("size", 0),
+                            "flags": span.get("flags", 0)
+                        })
+    
+    # Get concatenated text for AI context
+    full_text = page.get_text("text", clip=clip_rect).strip()
+    
+    doc.close()
+    
+    return {
+        "full_text": full_text,
+        "text_elements": text_elements,
+        "clip_rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
+        "page_width": actual_width,
+        "page_height": actual_height
+    }
+
+
 def _save_crop_image(crop_bytes: bytes, file_id: str, pointer_id: str) -> str:
     """
     Save crop image to disk and return the path.
@@ -708,6 +778,13 @@ async def create_context_pointer_from_highlight(
         # Save the crop image
         crop_path = _save_crop_image(crop_bytes, page_context.file_id, pointer_id)
         
+        # Extract text from the region with bounding boxes
+        text_content = _extract_text_from_region(
+            pdf_path=file.path,
+            page_num=page_context.page_number - 1,  # convert to 0-indexed
+            bbox=body.bbox
+        )
+        
         # Analyze with Gemini
         bbox_dict = {
             "x": body.bbox.x,
@@ -732,6 +809,7 @@ async def create_context_pointer_from_highlight(
             title=analysis.get("title", "Highlight"),
             description=analysis.get("description", ""),
             crop_path=crop_path,
+            text_content=text_content,  # Store extracted text with positions
             status="complete",
         )
         db.add(db_pointer)

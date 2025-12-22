@@ -31,6 +31,7 @@ from ..schemas import (
 )
 from ..security import get_current_user
 from ..services.gemini_agent_service import query_agent
+from ..services.highlight_matcher import extract_highlights_from_response
 
 router = APIRouter()
 
@@ -287,6 +288,8 @@ async def create_message(
             "elements": pointer.ai_elements,
             "recommendations": pointer.ai_recommendations,
             "technical_description": pointer.ai_technical_description,
+            # Text content for highlight matching
+            "text_content": pointer.text_content,
         })
     
     # 4. Call the agent
@@ -343,7 +346,33 @@ async def create_message(
     # Refresh agent message to get pointers
     db.refresh(agent_message)
     
-    # 9. Return the agent message response
+    # 9. Extract highlights from agent response
+    # Gather context pointers that were selected by the agent
+    selected_pointer_ids = []
+    for selected in agent_response.get("selectedPointers", []):
+        pointer_id = selected.get("id")
+        if pointer_id:
+            selected_pointer_ids.append(pointer_id)
+    
+    # Get full pointer data with text_content for selected pointers
+    selected_pointers_data = []
+    for pointer_id in selected_pointer_ids:
+        if pointer_id in pointer_lookup:
+            pointer, file = pointer_lookup[pointer_id]
+            selected_pointers_data.append({
+                "id": pointer.id,
+                "text_content": pointer.text_content
+            })
+    
+    # Extract highlights from agent response
+    combined_response = (agent_response.get("shortAnswer", "") + " " + 
+                         agent_response.get("narrative", ""))
+    highlights = extract_highlights_from_response(
+        agent_response=combined_response,
+        context_pointers=selected_pointers_data
+    )
+    
+    # 10. Return the agent message response
     # Need to reload with pointers relationship
     agent_message = (
         db.query(AgentMessage)
@@ -352,5 +381,8 @@ async def create_message(
         .first()
     )
     
-    return AgentMessageResponse.from_orm_model(agent_message)
+    response = AgentMessageResponse.from_orm_model(agent_message)
+    # Add highlights to response
+    response.highlights = highlights
+    return response
 

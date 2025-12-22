@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
-import type { AgentMessage, AgentSession, AgentSessionSummary } from '../types';
+import type { AgentMessage, AgentSession, AgentSessionSummary, TextHighlight } from '../types';
 import { AgentHistorySidebar } from './AgentHistorySidebar';
 import { AgentInput } from './AgentInput';
 import { AgentThread } from './AgentThread';
@@ -10,7 +10,7 @@ interface Props {
   selectedSheetId: string | null;
   onSelectSheet: (sheetId: string) => void;
   onNarrativeChange: (narrative: string | null) => void;
-  onActivePointersChange: (pointerIds: string[]) => void;
+  onActivePointersChange: (pointerIds: string[], highlights?: TextHighlight[]) => void;
 }
 
 export function AgentPanel({
@@ -150,7 +150,8 @@ export function AgentPanel({
           agentResponse.sheets?.flatMap((s) => s.pointers.map((p) => p.id)) ?? [];
         const accumulatedIds = [...new Set([...activePointerIdsRef.current, ...newPointerIds])];
         activePointerIdsRef.current = accumulatedIds;
-        onActivePointersChange(accumulatedIds);
+        // Pass highlights from agent response
+        onActivePointersChange(accumulatedIds, agentResponse.highlights);
 
         // Update narrative for viewer overlay
         onNarrativeChange(agentResponse.narrative ?? null);

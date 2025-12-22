@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { api } from '../services/api';
-import type { ContextPointer, ProjectFile } from '../types';
+import type { ContextPointer, ProjectFile, TextHighlight } from '../types';
 import { NarrativeResponse } from './NarrativeResponse';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -13,12 +13,13 @@ interface Props {
   fileId: string | null;
   highlightedPointerId: string | null;
   activePointerIds: string[];
+  activeHighlights?: TextHighlight[];
   narrative?: string | null;
   onDismissNarrative?: () => void;
   showHeader?: boolean;
 }
 
-export function PlanViewer({ fileId, highlightedPointerId, activePointerIds, narrative, onDismissNarrative, showHeader = true }: Props) {
+export function PlanViewer({ fileId, highlightedPointerId, activePointerIds, activeHighlights, narrative, onDismissNarrative, showHeader = true }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pdfWrapperRef = useRef<HTMLDivElement | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
@@ -493,6 +494,10 @@ export function PlanViewer({ fileId, highlightedPointerId, activePointerIds, nar
                 {visiblePointers.map((p) => {
                   const isHighlighted = p.id === highlightedPointerId;
                   const strokeWidth = Math.max(1, p.style?.strokeWidth ?? 2);
+                  // Get highlights for this specific pointer
+                  // Get highlights for this specific pointer (API returns snake_case keys)
+                  const pointerHighlights = activeHighlights?.filter((h: any) => h.pointer_id === p.id) || [];
+                  
                   return (
                     <div
                       key={p.id}
@@ -511,7 +516,25 @@ export function PlanViewer({ fileId, highlightedPointerId, activePointerIds, nar
                         background: 'transparent',
                         boxSizing: 'border-box',
                       }}
-                    />
+                    >
+                      {/* Render text highlights within this pointer */}
+                      {pointerHighlights.map((highlight: any, idx: number) => (
+                        <div
+                          key={`highlight-${idx}`}
+                          className="absolute"
+                          style={{
+                            left: `${highlight.bbox_normalized.x * 100}%`,
+                            top: `${highlight.bbox_normalized.y * 100}%`,
+                            width: `${highlight.bbox_normalized.width * 100}%`,
+                            height: `${highlight.bbox_normalized.height * 100}%`,
+                            backgroundColor: 'rgba(255, 255, 0, 0.4)',
+                            border: highlight.score > 0.9 ? '1px solid rgba(255, 200, 0, 0.8)' : 'none',
+                            borderRadius: '2px',
+                          }}
+                          title={highlight.matched_text}
+                        />
+                      ))}
+                    </div>
                   );
                 })}
               </div>

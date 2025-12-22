@@ -77,6 +77,8 @@ def _run_migrations():
         ("context_pointers", "ai_trade_category", "ALTER TABLE context_pointers ADD COLUMN ai_trade_category TEXT"),
         ("context_pointers", "ai_elements", "ALTER TABLE context_pointers ADD COLUMN ai_elements JSON"),
         ("context_pointers", "ai_recommendations", "ALTER TABLE context_pointers ADD COLUMN ai_recommendations TEXT"),
+        # Text content for PDF text extraction with bounding boxes
+        ("context_pointers", "text_content", "ALTER TABLE context_pointers ADD COLUMN text_content JSON"),
     ]
     
     with engine.connect() as conn:

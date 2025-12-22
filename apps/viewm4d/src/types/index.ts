@@ -41,6 +41,36 @@ export interface ProjectFileTreeNode {
   children: ProjectFileTreeNode[];
 }
 
+// Text content extracted from PDF region with bounding boxes
+export interface TextElement {
+  text: string;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  font: string;
+  size: number;
+}
+
+export interface TextContent {
+  fullText: string;
+  textElements: TextElement[];
+  clipRect: { x0: number; y0: number; x1: number; y1: number };
+  pageWidth: number;
+  pageHeight: number;
+}
+
+// Text highlight from agent response matching pointer text content
+export interface TextHighlight {
+  pointerId: string;
+  bboxNormalized: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  matchedText: string;
+  score: number;
+  matchType: 'substring' | 'fuzzy' | 'token_overlap';
+}
+
 export interface ContextPointer {
   id: string;
   fileId: string;
@@ -58,6 +88,7 @@ export interface ContextPointer {
     strokeWidth: number;
   };
   snapshotDataUrl: string | null;
+  textContent?: TextContent;  // Extracted text with bounding boxes
   createdAt: string;
 }
 
@@ -149,6 +180,7 @@ export interface AgentMessage {
   content: string;              // User question OR agent short answer
   narrative?: string;           // Agent only: full response for viewer overlay
   sheets?: AgentSheetResult[];  // Agent only: grouped pointers by sheet
+  highlights?: TextHighlight[]; // Agent only: text highlights within pointers
   createdAt: string;
 }
 
