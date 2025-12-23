@@ -528,7 +528,7 @@ export function PlanViewer({ fileId, highlightedPointerId, activePointerIds, act
                             width: `${highlight.bbox_normalized.width * 100}%`,
                             height: `${highlight.bbox_normalized.height * 100}%`,
                             backgroundColor: 'rgba(255, 255, 0, 0.4)',
-                            border: highlight.score > 0.9 ? '1px solid rgba(255, 200, 0, 0.8)' : 'none',
+                            border: '1px solid rgba(255, 200, 0, 0.8)',
                             borderRadius: '2px',
                           }}
                           title={highlight.matched_text}

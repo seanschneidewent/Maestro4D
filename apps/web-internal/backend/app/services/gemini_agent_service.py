@@ -126,6 +126,14 @@ def format_pointers_for_prompt(pointers: List[Dict[str, Any]]) -> str:
         if p.get('recommendations'):
             parts.append(f"Recommendations: {p['recommendations']}")
         
+        # Add extracted text elements with IDs for highlight referencing
+        if p.get('text_content') and p['text_content'].get('text_elements'):
+            text_elements = p['text_content']['text_elements']
+            if text_elements:
+                parts.append("Extracted text:")
+                for el in text_elements:
+                    parts.append(f"  [{el['id']}] \"{el['text']}\"")
+        
         parts.append("</pointer>")
         lines.append("\n".join(parts))
     
@@ -148,6 +156,7 @@ Each pointer includes:
 - AI Analysis describing the technical content
 - Identified elements and components
 - Recommendations for review
+- Extracted text elements with unique IDs (e.g., [pointer_abc_t0] "text content")
 
 Your job is to:
 1. Consider the conversation history to understand follow-up questions
@@ -174,7 +183,8 @@ You must respond with valid JSON in exactly this structure:
   "selectedPointers": [
     {"id": "exact_pointer_id", "sheetId": "sheet_uuid", "sheetName": "A-101", "reason": "Brief reason why this is relevant"},
     ...
-  ]
+  ],
+  "highlightedTextIds": ["pointer_abc_t0", "pointer_abc_t2"]
 }
 
 IMPORTANT:
@@ -184,11 +194,15 @@ IMPORTANT:
 - Include sheetId and sheetName for each selected pointer (copy from the pointer data)
 - Order selectedPointers by relevance (most relevant first)
 
+TEXT HIGHLIGHTING:
+When your answer references specific extracted text from the pointers, include the text element IDs in the "highlightedTextIds" array. Only include IDs for text you directly used to answer the question. If you don't reference any specific extracted text, use an empty array [].
+
 If absolutely no context pointers are related to the question, respond with:
 {
   "shortAnswer": "I couldn't find specific information about that in the uploaded plans.",
   "narrative": "This topic doesn't appear to be covered in the context pointers I have access to. Try asking about a specific detail, spec, or area shown in the drawings, or check if the relevant plans have been processed.",
-  "selectedPointers": []
+  "selectedPointers": [],
+  "highlightedTextIds": []
 }"""
 
 
@@ -263,6 +277,22 @@ async def query_agent(
     # Format context pointers for the prompt
     pointers_text = format_pointers_for_prompt(context_pointers)
     
+    # #region Debug logging: Pointer data sample
+    print("=== POINTER DATA SAMPLE ===")
+    if context_pointers:
+        first_pointer = context_pointers[0]
+        print(f"First pointer ID: {first_pointer.get('id')}")
+        print(f"Has text_content: {first_pointer.get('text_content') is not None}")
+        if first_pointer.get('text_content'):
+            elements = first_pointer['text_content'].get('text_elements', [])
+            print(f"Text elements count: {len(elements)}")
+            if elements:
+                print(f"First element: {elements[0]}")
+    print("=== FORMATTED PROMPT (first 3000 chars) ===")
+    print(pointers_text[:3000])
+    print("=== END PROMPT ===")
+    # #endregion
+    
     # Build system prompt and messages
     system_prompt = build_system_prompt()
     messages = build_messages(user_query, conversation_history, pointers_text)
@@ -290,6 +320,12 @@ async def query_agent(
         
         result = await _retry_with_backoff(_generate)
         
+        # #region Debug logging: Agent raw response
+        print("=== AGENT RAW RESPONSE ===")
+        print(result[-500:] if result else "No response")  # Last 500 chars to see if <highlighted_text> tags are there
+        print("=== END RAW RESPONSE ===")
+        # #endregion
+        
         # Handle empty response
         if not result or len(result.strip()) == 0:
             return _get_fallback_response("Empty response from Gemini")
@@ -313,7 +349,8 @@ async def query_agent(
             return {
                 "shortAnswer": parsed.get("shortAnswer", ""),
                 "narrative": parsed.get("narrative", ""),
-                "selectedPointers": parsed.get("selectedPointers", [])
+                "selectedPointers": parsed.get("selectedPointers", []),
+                "highlightedTextIds": parsed.get("highlightedTextIds", [])
             }
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}\nResponse: {result[:500]}")

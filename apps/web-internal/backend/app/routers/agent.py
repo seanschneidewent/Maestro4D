@@ -5,8 +5,9 @@ Provides endpoints for managing multi-turn conversations with the Gemini agent,
 including session management and message handling with context pointer selection.
 """
 
+import re
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query as FQuery
 from sqlalchemy.orm import Session, joinedload
@@ -31,9 +32,72 @@ from ..schemas import (
 )
 from ..security import get_current_user
 from ..services.gemini_agent_service import query_agent
-from ..services.highlight_matcher import extract_highlights_from_response
 
 router = APIRouter()
+
+
+def extract_highlighted_ids(response_text: str) -> List[str]:
+    """Extract text element IDs from <highlighted_text> tags in agent response."""
+    match = re.search(r'<highlighted_text>(.*?)</highlighted_text>', response_text, re.DOTALL)
+    if not match:
+        return []
+    return [id.strip() for id in match.group(1).split(',') if id.strip()]
+
+
+def get_highlights_from_ids(ids: List[str], pointers_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Look up text elements by ID and convert to highlight format.
+    
+    Args:
+        ids: List of text element IDs from agent response
+        pointers_data: List of context pointers with text_content
+        
+    Returns:
+        List of highlight objects with normalized coordinates
+    """
+    highlights = []
+    ids_set = set(ids)
+    
+    for pointer in pointers_data:
+        text_content = pointer.get("text_content") or {}
+        elements = text_content.get("text_elements", [])
+        clip_rect = text_content.get("clip_rect", {})
+        
+        if not elements or not clip_rect:
+            continue
+        
+        for el in elements:
+            if el.get("id") in ids_set:
+                # Convert absolute PDF coords to normalized coords relative to pointer bounds
+                bbox = el["bbox"]
+                px = clip_rect.get("x0", 0)
+                py = clip_rect.get("y0", 0)
+                pw = clip_rect.get("x1", 1) - px
+                ph = clip_rect.get("y1", 1) - py
+                
+                norm_x = (bbox["x0"] - px) / pw if pw else 0
+                norm_y = (bbox["y0"] - py) / ph if ph else 0
+                norm_w = (bbox["x1"] - bbox["x0"]) / pw if pw else 0
+                norm_h = (bbox["y1"] - bbox["y0"]) / ph if ph else 0
+                
+                # #region agent log
+                import json, time
+                with open("/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log", "a") as _dbg:
+                    _dbg.write(json.dumps({"sessionId":"debug-session","runId":"coord-debug","hypothesisId":"H2-normalize","location":"agent.py:get_highlights_from_ids","message":"Highlight normalization","data":{"element_id":el.get("id"),"element_bbox":bbox,"clip_rect":clip_rect,"px":px,"py":py,"pw":pw,"ph":ph,"norm_x":norm_x,"norm_y":norm_y,"norm_w":norm_w,"norm_h":norm_h,"text_preview":el.get("text","")[:40]},"timestamp":int(time.time()*1000)})+"\n")
+                # #endregion
+                
+                highlights.append({
+                    "pointer_id": pointer["id"],
+                    "bbox_normalized": {
+                        "x": norm_x,
+                        "y": norm_y,
+                        "width": norm_w,
+                        "height": norm_h,
+                    },
+                    "matched_text": el["text"],
+                })
+    
+    return highlights
 
 
 def _verify_session_ownership(db: Session, session_id: str, user_id: str) -> AgentSession:
@@ -346,7 +410,7 @@ async def create_message(
     # Refresh agent message to get pointers
     db.refresh(agent_message)
     
-    # 9. Extract highlights from agent response
+    # 9. Extract highlights from agent response using ID-based lookup
     # Gather context pointers that were selected by the agent
     selected_pointer_ids = []
     for selected in agent_response.get("selectedPointers", []):
@@ -364,13 +428,16 @@ async def create_message(
                 "text_content": pointer.text_content
             })
     
-    # Extract highlights from agent response
-    combined_response = (agent_response.get("shortAnswer", "") + " " + 
-                         agent_response.get("narrative", ""))
-    highlights = extract_highlights_from_response(
-        agent_response=combined_response,
-        context_pointers=selected_pointers_data
-    )
+    # Extract highlighted text element IDs from agent response JSON field
+    highlighted_ids = agent_response.get("highlightedTextIds", [])
+    
+    # #region Debug logging: Highlighted IDs from JSON
+    print("=== AGENT HIGHLIGHTED TEXT IDS ===")
+    print(f"highlightedTextIds from JSON: {highlighted_ids}")
+    print(f"Selected pointers count: {len(selected_pointers_data)}")
+    # #endregion
+    
+    highlights = get_highlights_from_ids(highlighted_ids, selected_pointers_data)
     
     # 10. Return the agent message response
     # Need to reload with pointers relationship

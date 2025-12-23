@@ -168,6 +168,9 @@ Keep the response to 2-4 sentences. Be specific and technical but accessible to 
         
     except Exception as e:
         logger.error(f"Failed to analyze page {page_number} of {file_name}: {e}")
+        # #region agent log H6
+        import json as _json, traceback as _tb; open('/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log','a').write(_json.dumps({"hypothesisId":"H6","location":"gemini_service.py:analyze_page","message":"Exception caught","data":{"error_type":type(e).__name__,"error_msg":str(e),"traceback":_tb.format_exc()},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session"})+'\n')
+        # #endregion
         return "[Analysis unavailable]"
 
 

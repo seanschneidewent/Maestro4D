@@ -67,8 +67,6 @@ export interface TextHighlight {
     height: number;
   };
   matchedText: string;
-  score: number;
-  matchType: 'substring' | 'fuzzy' | 'token_overlap';
 }
 
 export interface ContextPointer {

@@ -330,10 +330,27 @@ def _crop_pdf_page(
     return png_bytes
 
 
+def _transform_bbox_for_rotation(bbox_tuple, rotation, mediabox_width, mediabox_height):
+    """Transform bbox from mediabox (unrotated) coords to display (rotated) coords."""
+    x0, y0, x1, y1 = bbox_tuple
+    
+    if rotation == 0:
+        return (x0, y0, x1, y1)
+    elif rotation == 90:
+        return (mediabox_height - y1, x0, mediabox_height - y0, x1)
+    elif rotation == 180:
+        return (mediabox_width - x1, mediabox_height - y1, mediabox_width - x0, mediabox_height - y0)
+    elif rotation == 270:
+        return (y0, mediabox_width - x1, y1, mediabox_width - x0)
+    else:
+        return (x0, y0, x1, y1)
+
+
 def _extract_text_from_region(
     pdf_path: str,
     page_num: int,
     bbox: HighlightBbox,
+    pointer_id: str,
 ) -> dict:
     """
     Extract text and bounding boxes from a specific region of a PDF page.
@@ -342,6 +359,7 @@ def _extract_text_from_region(
         pdf_path: Path to PDF file
         page_num: 0-indexed page number
         bbox: Normalized bounds with x, y, width, height where values are 0-1
+        pointer_id: ID of the context pointer (used to generate unique text element IDs)
     
     Returns:
         Dict with full_text, text_elements array, and clip_rect
@@ -351,50 +369,161 @@ def _extract_text_from_region(
     doc = fitz.open(pdf_path)
     page = doc[page_num]
     
-    # Get actual page dimensions
+    # #region Debug logging: Page rotation check
+    print(f"=== PAGE ROTATION DEBUG ===")
+    print(f"page.rotation: {page.rotation}")
+    print(f"page.rect: {page.rect}")
+    print(f"page.mediabox: {page.mediabox}")
+    print(f"page.cropbox: {page.cropbox}")
+    # #endregion
+    
+    # #region Debug logging: Test if ANY text exists on the page
+    # DEBUG - test if ANY text exists on the page
+    all_text = page.get_text("text")
+    print(f"Total text on page (first 500 chars): '{all_text[:500]}'")
+    print(f"Total text length: {len(all_text)}")
+    # #endregion
+    
+    # Get actual page dimensions (rotated display size)
     actual_width = page.rect.width
     actual_height = page.rect.height
     
+    # Get rotation info for bbox transformation
+    rotation = page.rotation
+    mediabox = page.mediabox
+    mediabox_width = mediabox.width
+    mediabox_height = mediabox.height
+    
     # Convert normalized coords to PDF points
     x0 = bbox.x * actual_width
-    y0 = bbox.y * actual_height
     x1 = x0 + (bbox.width * actual_width)
-    y1 = y0 + (bbox.height * actual_height)
+    
+    # FLIP Y-AXIS: PDF origin is bottom-left, web origin is top-left
+    y0 = (1 - bbox.y - bbox.height) * actual_height  # top of box in PDF coords
+    y1 = (1 - bbox.y) * actual_height                 # bottom of box in PDF coords
     
     clip_rect = fitz.Rect(x0, y0, x1, y1)
+    
+    # #region Debug logging: Clip rect calculation
+    print(f"=== TEXT EXTRACTION DEBUG ===")
+    print(f"PDF: {pdf_path}")
+    print(f"Page: {page_num}, Page size: {actual_width} x {actual_height}")
+    print(f"Input bbox: x={bbox.x}, y={bbox.y}, w={bbox.width}, h={bbox.height}")
+    print(f"Clip rect: {clip_rect}")
+    # #endregion
     
     # Extract text blocks with positions
     text_dict = page.get_text("dict", clip=clip_rect)
     
-    text_elements = []
+    # #region Debug logging: Text extraction results
+    print(f"Blocks found: {len(text_dict.get('blocks', []))}")
+    full_text = page.get_text("text", clip=clip_rect).strip()
+    print(f"Full text extracted: '{full_text[:200]}'" if full_text else "Full text: EMPTY")
+    # #endregion
+    
+    # Phase 1: Collect all spans with transformed bboxes
+    raw_spans = []
     for block in text_dict.get("blocks", []):
         if block.get("type") == 0:  # text block
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     if span["text"].strip():  # skip empty spans
-                        # Store bbox in absolute PDF coordinates
-                        text_elements.append({
+                        # Transform bbox from mediabox coords to display coords
+                        raw_bbox = span["bbox"]  # (x0, y0, x1, y1) in mediabox coords
+                        transformed = _transform_bbox_for_rotation(raw_bbox, rotation, mediabox_width, mediabox_height)
+                        
+                        # #region Debug logging: Raw and transformed span bbox
+                        print(f"Raw span bbox: {raw_bbox} -> Transformed: {transformed} for text: '{span['text'][:30]}'")
+                        # #endregion
+                        
+                        # #region agent log
+                        import json
+                        with open("/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log", "a") as _dbg:
+                            _dbg.write(json.dumps({"sessionId":"debug-session","runId":"coord-debug","hypothesisId":"H1-transform","location":"context.py:_extract_text_from_region:span_loop","message":"Coordinate transformation step","data":{"rotation":rotation,"mediabox_width":mediabox_width,"mediabox_height":mediabox_height,"display_width":actual_width,"display_height":actual_height,"clip_rect":{"x0":x0,"y0":y0,"x1":x1,"y1":y1},"raw_span_bbox":list(raw_bbox),"transformed_bbox":list(transformed),"text_preview":span["text"][:40]},"timestamp":int(__import__("time").time()*1000)})+"\n")
+                        # #endregion
+                        
+                        # Store span data with transformed bbox
+                        raw_spans.append({
                             "text": span["text"],
-                            "bbox": {
-                                "x0": span["bbox"][0],
-                                "y0": span["bbox"][1],
-                                "x1": span["bbox"][2],
-                                "y1": span["bbox"][3]
-                            },
+                            "bbox": transformed,  # (x0, y0, x1, y1) in display coords
                             "font": span.get("font", ""),
                             "size": span.get("size", 0),
                             "flags": span.get("flags", 0)
                         })
     
+    # Phase 2: Group spans by Y position (round to nearest 5px) and merge into lines
+    # Group spans by rounded Y coordinate
+    line_groups = {}
+    for span in raw_spans:
+        y0 = span["bbox"][1]  # y0 from transformed bbox
+        # Round to nearest 5px (±2.5px tolerance for font size variations)
+        line_key = round(y0 / 5) * 5
+        
+        if line_key not in line_groups:
+            line_groups[line_key] = []
+        line_groups[line_key].append(span)
+    
+    # Merge spans per line group
+    text_elements = []
+    for line_key in sorted(line_groups.keys()):  # Process lines top-to-bottom
+        line_spans = line_groups[line_key]
+        
+        # Sort spans left-to-right by x0
+        line_spans.sort(key=lambda s: s["bbox"][0])
+        
+        # Merge text content with space joins
+        merged_text = " ".join(span["text"] for span in line_spans)
+        
+        # Create unified bbox: min x0, min y0, max x1, max y1 from all spans
+        min_x0 = min(span["bbox"][0] for span in line_spans)
+        min_y0 = min(span["bbox"][1] for span in line_spans)
+        max_x1 = max(span["bbox"][2] for span in line_spans)
+        max_y1 = max(span["bbox"][3] for span in line_spans)
+        
+        # Add ±2px vertical padding to ensure full glyph coverage
+        unified_bbox = {
+            "x0": min_x0,
+            "y0": min_y0 - 2,
+            "x1": max_x1,
+            "y1": max_y1 + 2
+        }
+        
+        # Use metadata from first span in line (or could merge, but first is simplest)
+        first_span = line_spans[0]
+        
+        # Create text_element for merged line
+        text_elements.append({
+            "id": f"{pointer_id}_t{len(text_elements)}",
+            "text": merged_text,
+            "bbox": unified_bbox,
+            "font": first_span["font"],
+            "size": first_span["size"],
+            "flags": first_span["flags"]
+        })
+    
     # Get concatenated text for AI context
     full_text = page.get_text("text", clip=clip_rect).strip()
+    
+    # #region Debug logging: Final text elements count
+    print(f"Text elements extracted: {len(text_elements)}")
+    if text_elements:
+        print(f"First text element: {text_elements[0]}")
+    print("=== END TEXT EXTRACTION DEBUG ===")
+    # #endregion
     
     doc.close()
     
     return {
         "full_text": full_text,
         "text_elements": text_elements,
-        "clip_rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
+        # Store clip_rect in DISPLAY coordinates (matching transformed text bboxes)
+        # NOT the flipped PyMuPDF query coordinates
+        "clip_rect": {
+            "x0": bbox.x * actual_width,
+            "y0": bbox.y * actual_height,
+            "x1": (bbox.x + bbox.width) * actual_width,
+            "y1": (bbox.y + bbox.height) * actual_height
+        },
         "page_width": actual_width,
         "page_height": actual_height
     }
@@ -782,7 +911,8 @@ async def create_context_pointer_from_highlight(
         text_content = _extract_text_from_region(
             pdf_path=file.path,
             page_num=page_context.page_number - 1,  # convert to 0-indexed
-            bbox=body.bbox
+            bbox=body.bbox,
+            pointer_id=pointer_id,
         )
         
         # Analyze with Gemini
