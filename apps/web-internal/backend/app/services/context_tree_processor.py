@@ -806,7 +806,7 @@ PAGE INFO:
 
 POINTERS ON THIS PAGE:
 {pointers_text}
-{spans_section}TASK:
+TASK:
 Analyze this page and return a JSON response with:
 
 1. "discipline" - The primary discipline this page belongs to. Use standard codes:
