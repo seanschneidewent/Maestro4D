@@ -796,3 +796,217 @@ export async function checkBackendHealth(): Promise<boolean> {
   }
 }
 
+
+// =============================================================================
+// Context Tree Page Contexts
+// =============================================================================
+
+export interface ContextTreePageContext {
+  id: string;
+  fileId: string;
+  pageNumber: number;
+  createdAt: string;
+  updatedAt: string;
+  sheetNumber?: string;
+  pageTitle?: string;
+  disciplineCode?: string;
+  disciplineId?: string;
+  quickDescription?: string;
+  contextDescription?: string;
+  updatedContext?: string;
+  identifiers?: Array<{ ref: string; type: string; content: string }>;
+  crossRefs?: Array<{ targetSheet: string; relationship: string }>;
+  pass1Output?: {
+    discipline: string;
+    sheet_number: string;
+    summary: string;
+    pointers: Array<{
+      pointer_id: string;
+      summary: string;
+      outbound_refs: Array<{ ref: string; type: string; source_element_id?: string; source_text?: string }>;
+    }>;
+  };
+  inboundReferences?: Array<{
+    source_sheet: string;
+    source_page_id: string;
+    from_pointer: string;
+    type: string;
+    original_ref: string;
+    context?: string;
+    source_element_id?: string;
+    source_text?: string;
+  }>;
+  pass2Output?: Record<string, unknown>;
+  processingStatus: string;
+  retryCount: number;
+}
+
+export async function fetchPageContexts(projectId: string): Promise<ContextTreePageContext[]> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/page-contexts`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch page contexts: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// =============================================================================
+// Context Tree Discipline Contexts
+// =============================================================================
+
+export interface DisciplineKeyContent {
+  item: string;
+  type: string;
+  sheet: string;
+}
+
+export interface DisciplineConnection {
+  discipline: string;
+  relationship: string;
+}
+
+export interface DisciplineContext {
+  id: string;
+  projectId: string;
+  code: string;
+  name: string;
+  contextDescription?: string;
+  keyContents?: DisciplineKeyContent[];
+  connections?: DisciplineConnection[];
+  processingStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchDisciplineContexts(projectId: string): Promise<DisciplineContext[]> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/discipline-contexts`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch discipline contexts: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function triggerDisciplineProcessing(
+  projectId: string
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/process-disciplines`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to trigger discipline processing: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// =============================================================================
+// Reset Page Processing
+// =============================================================================
+
+export async function resetPageProcessing(projectId: string): Promise<{ message: string; pagesReset: number }> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/reset-page-processing`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to reset page processing: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// =============================================================================
+// Context Tree Processing API
+// =============================================================================
+
+export interface PagesProcessingStatus {
+  status: 'idle' | 'processing' | 'complete';
+  total: number;
+  pass1Complete: number;
+  pass2Complete: number;
+}
+
+export interface DisciplinesProcessingStatus {
+  status: 'idle' | 'processing' | 'complete';
+  total: number;
+  waiting: number;
+  ready: number;
+  processing: number;
+  complete: number;
+}
+
+export interface ProjectProcessingStatusResponse {
+  pages: PagesProcessingStatus;
+  disciplines: DisciplinesProcessingStatus;
+}
+
+export async function fetchContextTreeProcessingStatus(
+  projectId: string
+): Promise<ProjectProcessingStatusResponse> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/processing-status`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch processing status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function triggerPageProcessing(
+  projectId: string
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE}/api/context-tree/projects/${projectId}/process-pages`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to trigger page processing: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export function getProcessingProgressSSEUrl(projectId: string): string {
+  return `${API_BASE}/api/context-tree/projects/${projectId}/processing-progress`;
+}
+
+// =============================================================================
+// Context Tree Processing Types
+// =============================================================================
+
+export interface OutboundRef {
+  ref: string;      // Target sheet/detail reference (e.g., "AS2.1", "A-501", "3/A-401")
+  type: string;     // detail, sheet, section, elevation, schedule
+  source_element_id?: string;  // Text element ID from pointer that contains this reference
+  source_text?: string;        // Full text of the source element
+}
+
+export interface Pass1Pointer {
+  pointer_id: string;   // UUID from input
+  summary: string;      // One sentence describing what this pointer contains
+  outbound_refs: OutboundRef[];
+}
+
+export interface PageContextPass1Output {
+  discipline: string;   // A, S, M, E, P, FP, C, L, G
+  sheet_number: string;
+  summary: string;      // 2-3 sentence page summary
+  pointers: Pass1Pointer[];
+}
+
+export interface InboundReference {
+  source_sheet: string;      // Sheet number of the page that references this page
+  source_page_id: string;    // Page ID of the source
+  from_pointer: string;      // Pointer ID in the source page
+  type: string;              // Reference type (detail, sheet, section, etc.)
+  original_ref: string;      // Original reference string for display
+  context?: string;          // Context explaining what the source page wants (added after Pass 2)
+  source_element_id?: string;  // Text element ID that contains this reference
+  source_text?: string;        // Full text of the source element
+}
+
+// For PDF highlighting (matches ViewM4D pattern)
+export interface TextHighlight {
+  pointerId: string;
+  elementId: string;
+  bboxNormalized: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  matchedText: string;
+}
+

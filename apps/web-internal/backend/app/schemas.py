@@ -682,6 +682,23 @@ class EnhancedQueryResponse(BaseModel):
 # Page Context Schemas (AI-generated page descriptions)
 # =============================================================================
 
+class PageContextIdentifier(BaseModel):
+    """Identifier extracted from a page (spec, assembly, detail, etc.)."""
+    ref: str
+    type: str  # spec, assembly, detail, equipment, grid, schedule, note
+    content: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class PageContextCrossRef(BaseModel):
+    """Cross-reference to another page."""
+    target_sheet: str = Field(alias="targetSheet")
+    relationship: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class PageContextBase(BaseModel):
     content: Optional[str] = None
     status: str = "pending"  # pending, processing, complete, error
@@ -693,6 +710,8 @@ class PageContextBase(BaseModel):
 class PageContextUpdate(BaseModel):
     """For user editing AI-generated content."""
     content: Optional[str] = None
+    sheet_number: Optional[str] = Field(None, alias="sheetNumber")
+    page_title: Optional[str] = Field(None, alias="pageTitle")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -703,6 +722,21 @@ class PageContextResponse(PageContextBase):
     page_number: int = Field(alias="pageNumber")
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
+    # Context tree processing fields
+    sheet_number: Optional[str] = Field(None, alias="sheetNumber")
+    page_title: Optional[str] = Field(None, alias="pageTitle")
+    discipline_code: Optional[str] = Field(None, alias="disciplineCode")
+    discipline_id: Optional[str] = Field(None, alias="disciplineId")
+    quick_description: Optional[str] = Field(None, alias="quickDescription")
+    context_description: Optional[str] = Field(None, alias="contextDescription")
+    updated_context: Optional[str] = Field(None, alias="updatedContext")
+    identifiers: Optional[List[PageContextIdentifier]] = None
+    cross_refs: Optional[List[PageContextCrossRef]] = Field(None, alias="crossRefs")
+    pass1_output: Optional[dict] = Field(None, alias="pass1Output")
+    inbound_references: Optional[list] = Field(None, alias="inboundReferences")
+    pass2_output: Optional[dict] = Field(None, alias="pass2Output")
+    processing_status: str = Field("unprocessed", alias="processingStatus")
+    retry_count: int = Field(0, alias="retryCount")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -728,6 +762,78 @@ class ProcessContextTriggerResponse(BaseModel):
     job_id: str = Field(alias="jobId")
     message: str
     total_pages: int = Field(alias="totalPages")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+# =============================================================================
+# Discipline Context Schemas (aggregated context by discipline)
+# =============================================================================
+
+class DisciplineKeyContent(BaseModel):
+    """Key content item within a discipline."""
+    item: str
+    type: str  # spec, assembly, equipment, schedule, detail
+    sheet: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DisciplineConnection(BaseModel):
+    """Connection/dependency to another discipline."""
+    discipline: str  # discipline code
+    relationship: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DisciplineContextBase(BaseModel):
+    code: str  # A, S, M, E, P, FP, C, L, G
+    name: str  # Architectural, Structural, Mechanical, etc.
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DisciplineContextCreate(DisciplineContextBase):
+    project_id: str = Field(alias="projectId")
+
+
+class DisciplineContextUpdate(BaseModel):
+    """For updating discipline context after processing."""
+    context_description: Optional[str] = Field(None, alias="contextDescription")
+    key_contents: Optional[List[DisciplineKeyContent]] = Field(None, alias="keyContents")
+    connections: Optional[List[DisciplineConnection]] = None
+    processing_status: Optional[str] = Field(None, alias="processingStatus")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DisciplineContextResponse(DisciplineContextBase):
+    id: str
+    project_id: str = Field(alias="projectId")
+    context_description: Optional[str] = Field(None, alias="contextDescription")
+    key_contents: Optional[List[DisciplineKeyContent]] = Field(None, alias="keyContents")
+    connections: Optional[List[DisciplineConnection]] = None
+    processing_status: str = Field("waiting", alias="processingStatus")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class DisciplineContextWithPagesResponse(DisciplineContextResponse):
+    """Discipline context with associated page contexts."""
+    pages: List[PageContextResponse] = []
+    page_count: int = Field(0, alias="pageCount")
+
+
+class DisciplineProcessingStatusResponse(BaseModel):
+    """Status of discipline context processing for a project."""
+    total: int
+    waiting: int
+    ready: int
+    processing: int
+    complete: int
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1056,6 +1162,49 @@ class AgentSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+# =============================================================================
+# Context Tree Processing Schemas
+# =============================================================================
+
+class ContextTreeProcessingTriggerResponse(BaseModel):
+    """Response when triggering context tree processing."""
+    job_id: str = Field(alias="jobId")
+    status: str  # 'started' | 'already_running'
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class PagesProcessingStatus(BaseModel):
+    """Page processing status counts."""
+    total: int
+    unprocessed: int
+    pass1_complete: int = Field(alias="pass1Complete")
+    pass2_complete: int = Field(alias="pass2Complete")
+    status: str  # 'idle' | 'processing' | 'complete'
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DisciplinesProcessingStatus(BaseModel):
+    """Discipline processing status counts."""
+    total: int
+    waiting: int
+    ready: int
+    processing: int
+    complete: int
+    status: str  # 'idle' | 'processing' | 'complete'
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ProjectProcessingStatusResponse(BaseModel):
+    """Combined project-level processing status."""
+    pages: PagesProcessingStatus
+    disciplines: DisciplinesProcessingStatus
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 # Update forward references for nested models
 UserWithProjectsResponse.model_rebuild()
 QueryWithResultsResponse.model_rebuild()
@@ -1067,6 +1216,7 @@ BatchDetailResponse.model_rebuild()
 SheetContextWithPointersResponse.model_rebuild()
 EnhancedQueryResponse.model_rebuild()
 PageContextWithPointersResponse.model_rebuild()
+DisciplineContextWithPagesResponse.model_rebuild()
 AgentSessionResponse.model_rebuild()
 AgentMessageResponse.model_rebuild()
 

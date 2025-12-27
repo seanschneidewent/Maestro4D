@@ -28,6 +28,7 @@ from ..schemas import (
 )
 from ..models import Project
 from ..services.gemini_service import analyze_page, analyze_highlight
+from ..services.context_tree_processor import extract_title_from_filename, extract_sheet_number_from_filename
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,77 @@ def _transform_bbox_for_rotation(bbox_tuple, rotation, mediabox_width, mediabox_
         return (x0, y0, x1, y1)
 
 
+def _extract_all_page_spans(pdf_path: str, page_num: int) -> tuple[list[dict], float, float]:
+    """
+    Extract ALL text spans from a page (no clipping).
+    
+    Args:
+        pdf_path: Path to PDF file
+        page_num: 0-indexed page number
+    
+    Returns:
+        Tuple of (spans_list, page_width, page_height)
+        Each span: {"id": "span_0", "text": "...", "bbox": [x0,y0,x1,y1], "font": "...", "size": 12}
+    """
+    import fitz  # PyMuPDF
+    
+    doc = fitz.open(pdf_path)
+    page = doc[page_num]
+    
+    # Get page dimensions (display size after rotation)
+    page_width = page.rect.width
+    page_height = page.rect.height
+    
+    # Get rotation info for bbox transformation
+    rotation = page.rotation
+    mediabox = page.mediabox
+    mediabox_width = mediabox.width
+    mediabox_height = mediabox.height
+    
+    # Extract ALL text - no clip parameter
+    text_dict = page.get_text("dict")
+    
+    spans = []
+    span_idx = 0
+    
+    for block in text_dict.get("blocks", []):
+        if block.get("type") != 0:  # Skip non-text blocks
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = span.get("text", "").strip()
+                if not text:  # Skip empty spans
+                    continue
+                    
+                raw_bbox = span["bbox"]
+                
+                # Transform bbox for rotation (same transform used elsewhere)
+                transformed = _transform_bbox_for_rotation(
+                    raw_bbox, rotation, mediabox_width, mediabox_height
+                )
+                
+                spans.append({
+                    "id": f"span_{span_idx}",
+                    "text": text,
+                    "bbox": list(transformed),
+                    "font": span.get("font", ""),
+                    "size": span.get("size", 0),
+                })
+                span_idx += 1
+    
+    doc.close()
+    
+    print(f"=== EXTRACT ALL SPANS DEBUG ===")
+    print(f"Page {page_num}: {len(spans)} spans extracted")
+    print(f"Page dimensions: {page_width} x {page_height}")
+    if spans:
+        print(f"First span: {spans[0]}")
+        print(f"Last span: {spans[-1]}")
+    print(f"=== END EXTRACT ALL SPANS DEBUG ===")
+    
+    return spans, page_width, page_height
+
+
 def _extract_text_from_region(
     pdf_path: str,
     page_num: int,
@@ -353,6 +425,13 @@ def _extract_text_from_region(
     pointer_id: str,
 ) -> dict:
     """
+    DEPRECATED: Use _extract_all_page_spans() + vision-based matching instead.
+    
+    This function uses coordinate-based clipping which truncates text at boundaries.
+    The new approach extracts all spans and lets the vision model identify visible ones.
+    
+    ---
+    
     Extract text and bounding boxes from a specific region of a PDF page.
     
     Args:
@@ -434,12 +513,6 @@ def _extract_text_from_region(
                         
                         # #region Debug logging: Raw and transformed span bbox
                         print(f"Raw span bbox: {raw_bbox} -> Transformed: {transformed} for text: '{span['text'][:30]}'")
-                        # #endregion
-                        
-                        # #region agent log
-                        import json
-                        with open("/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log", "a") as _dbg:
-                            _dbg.write(json.dumps({"sessionId":"debug-session","runId":"coord-debug","hypothesisId":"H1-transform","location":"context.py:_extract_text_from_region:span_loop","message":"Coordinate transformation step","data":{"rotation":rotation,"mediabox_width":mediabox_width,"mediabox_height":mediabox_height,"display_width":actual_width,"display_height":actual_height,"clip_rect":{"x0":x0,"y0":y0,"x1":x1,"y1":y1},"raw_span_bbox":list(raw_bbox),"transformed_bbox":list(transformed),"text_preview":span["text"][:40]},"timestamp":int(__import__("time").time()*1000)})+"\n")
                         # #endregion
                         
                         # Store span data with transformed bbox
@@ -608,7 +681,9 @@ async def _process_plan_pages_task(file_id: str, job_id: str):
                     page_context = PageContext(
                         file_id=file_id,
                         page_number=page_num,
-                        status="processing"
+                        status="processing",
+                        page_title=extract_title_from_filename(file.name),
+                        sheet_number=extract_sheet_number_from_filename(file.name)
                     )
                     db.add(page_context)
                 else:
@@ -688,6 +763,10 @@ async def trigger_page_context_processing(
     job_id = str(uuid4())
     
     # Create pending PageContext records for all pages
+    # Extract title and sheet number from filename once
+    page_title = extract_title_from_filename(file.name)
+    sheet_number = extract_sheet_number_from_filename(file.name)
+    
     for page_num in range(1, page_count + 1):
         existing = db.query(PageContext).filter(
             PageContext.file_id == file_id,
@@ -698,7 +777,9 @@ async def trigger_page_context_processing(
             page_context = PageContext(
                 file_id=file_id,
                 page_number=page_num,
-                status="pending"
+                status="pending",
+                page_title=page_title,
+                sheet_number=sheet_number
             )
             db.add(page_context)
     
@@ -907,24 +988,68 @@ async def create_context_pointer_from_highlight(
         # Save the crop image
         crop_path = _save_crop_image(crop_bytes, page_context.file_id, pointer_id)
         
-        # Extract text from the region with bounding boxes
-        text_content = _extract_text_from_region(
+        # Extract ALL spans from page (no clipping) for vision-based matching
+        all_page_spans, page_width, page_height = _extract_all_page_spans(
             pdf_path=file.path,
             page_num=page_context.page_number - 1,  # convert to 0-indexed
-            bbox=body.bbox,
-            pointer_id=pointer_id,
         )
         
-        # Analyze with Gemini
+        # Analyze with Gemini - includes vision-based span matching
         bbox_dict = {
             "x": body.bbox.x,
             "y": body.bbox.y,
             "width": body.bbox.width,
             "height": body.bbox.height
         }
-        analysis = await analyze_highlight(crop_bytes, page_context.content, bbox_dict)
+        analysis = await analyze_highlight(
+            crop_bytes, 
+            page_context.content, 
+            bbox_dict,
+            all_page_spans=all_page_spans
+        )
         
-        # Create the ContextPointer
+        # Filter to only visible spans identified by the vision model
+        visible_ids = set(analysis.get("visible_span_ids", []))
+        matched_spans = [s for s in all_page_spans if s["id"] in visible_ids]
+        
+        print(f"=== VISION MATCHING DEBUG ===")
+        print(f"Total page spans: {len(all_page_spans)}")
+        print(f"Visible span IDs from agent: {visible_ids}")
+        print(f"Matched spans: {len(matched_spans)}")
+        if matched_spans:
+            print(f"First matched: {matched_spans[0]}")
+        print(f"=== END VISION MATCHING DEBUG ===")
+        
+        # Build text_content from matched spans
+        text_content = {
+            "full_text": " ".join([s["text"] for s in matched_spans]),
+            "text_elements": [
+                {
+                    "id": f"{pointer_id}_t{i}",
+                    "text": s["text"],
+                    "bbox": {
+                        "x0": s["bbox"][0],
+                        "y0": s["bbox"][1],
+                        "x1": s["bbox"][2],
+                        "y1": s["bbox"][3]
+                    },
+                    "font": s.get("font", ""),
+                    "size": s.get("size", 0),
+                    "flags": 0
+                }
+                for i, s in enumerate(matched_spans)
+            ],
+            "clip_rect": {
+                "x0": body.bbox.x * page_width,
+                "y0": body.bbox.y * page_height,
+                "x1": (body.bbox.x + body.bbox.width) * page_width,
+                "y1": (body.bbox.y + body.bbox.height) * page_height
+            },
+            "page_width": page_width,
+            "page_height": page_height
+        }
+        
+        # Create the ContextPointer with ALL fields populated from single-shot analysis
         db_pointer = ContextPointer(
             id=pointer_id,
             file_id=page_context.file_id,
@@ -940,6 +1065,13 @@ async def create_context_pointer_from_highlight(
             description=analysis.get("description", ""),
             crop_path=crop_path,
             text_content=text_content,  # Store extracted text with positions
+            # AI analysis fields - populated immediately from single-shot analysis
+            ai_technical_description=analysis.get("technicalDescription", ""),
+            ai_trade_category=analysis.get("tradeCategory", "general"),
+            ai_elements=analysis.get("identifiedElements", []),
+            ai_recommendations=analysis.get("recommendations", ""),
+            ai_measurements=analysis.get("measurements", []),
+            ai_issues=analysis.get("issues", []),
             status="complete",
         )
         db.add(db_pointer)

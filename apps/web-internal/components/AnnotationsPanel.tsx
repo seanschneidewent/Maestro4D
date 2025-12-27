@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { DocumentIcon, CloseIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon } from './Icons';
+import { DocumentIcon, CloseIcon, ChevronDownIcon, ChevronUpIcon } from './Icons';
 import { ContextPointer } from '../types/context';
 
 interface AnnotationsPanelProps {
@@ -15,8 +15,6 @@ interface AnnotationsPanelProps {
   onEditingPointerIdChange: (id: string | null) => void;
   selectedAnnotationIds: Set<string>;
   onSelectedAnnotationIdsChange: (ids: Set<string>) => void;
-  isAddedToContext: boolean;
-  onAddToContext: () => void;
   // New props for bidirectional interaction
   onPointerHover?: (pointerId: string | null) => void;
   onPointerClick?: (pointerId: string) => void;
@@ -300,8 +298,6 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
   onEditingPointerIdChange,
   selectedAnnotationIds,
   onSelectedAnnotationIdsChange,
-  isAddedToContext,
-  onAddToContext,
   onPointerHover,
   onPointerClick,
   highlightedPointerId,
@@ -412,15 +408,6 @@ const AnnotationsPanel: React.FC<AnnotationsPanelProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {!isAddedToContext && (
-            <button
-              onClick={onAddToContext}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded transition-colors"
-            >
-              <PlusIcon className="w-3 h-3" />
-              Add to Context
-            </button>
-          )}
           <button
             onClick={onToggleCollapse}
             className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"

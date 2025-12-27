@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import projects, scans, files, context, batches, insights, agents, users, queries, ai_processing, agent
+from .routers import projects, scans, files, context, batches, insights, agents, users, queries, ai_processing, agent, context_tree
 from .schemas import HealthResponse
 
 
@@ -65,6 +65,7 @@ app.include_router(users.router, prefix="/api", tags=["Users"])
 app.include_router(queries.router, prefix="/api", tags=["Queries"])
 app.include_router(ai_processing.router)
 app.include_router(agent.router, prefix="/api", tags=["Agent"])
+app.include_router(context_tree.router, prefix="/api/context-tree", tags=["Context Tree"])
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["Health"])

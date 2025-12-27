@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import uuid4
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, Text, DateTime, 
-    ForeignKey, JSON, UniqueConstraint
+    ForeignKey, JSON, UniqueConstraint, Index
 )
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -36,6 +36,7 @@ class Project(Base):
     assigned_users = relationship("UserProject", back_populates="project", cascade="all, delete-orphan")
     queries = relationship("Query", back_populates="project", cascade="all, delete-orphan")
     agent_sessions = relationship("AgentSession", back_populates="project", cascade="all, delete-orphan")
+    discipline_contexts = relationship("DisciplineContext", back_populates="project", cascade="all, delete-orphan")
 
 
 class Scan(Base):
@@ -118,11 +119,13 @@ class ContextPointer(Base):
     crop_path = Column(Text, nullable=True)  # Path to saved crop image file
     status = Column(String, default="complete")  # processing, complete, error
     committed_at = Column(DateTime, nullable=True)  # When committed to ViewM4D
-    # AI Analysis fields (populated after "Process with AI")
+    # AI Analysis fields (populated immediately from single-shot analysis)
     ai_technical_description = Column(Text, nullable=True)
     ai_trade_category = Column(String, nullable=True)
     ai_elements = Column(JSON, nullable=True)  # List of identified elements
     ai_recommendations = Column(Text, nullable=True)
+    ai_measurements = Column(JSON, nullable=True)  # List of measurement objects
+    ai_issues = Column(JSON, nullable=True)  # List of issue objects
     text_content = Column(JSON, nullable=True)  # Stores extracted text with positions from PDF region
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -161,14 +164,62 @@ class PageContext(Base):
     committed_at = Column(DateTime, nullable=True)  # When committed to ViewM4D
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Context tree processing fields
+    sheet_number = Column(String, nullable=True)  # e.g., "M3.2"
+    page_title = Column(String, nullable=True)
+    discipline_code = Column(String, nullable=True)  # A, S, M, E, P, FP, C, L, G
+    discipline_id = Column(String, ForeignKey("discipline_contexts.id"), nullable=True)
+    quick_description = Column(Text, nullable=True)  # initial description (may already exist)
+    context_description = Column(Text, nullable=True)  # Pass 1 output
+    updated_context = Column(Text, nullable=True)  # Pass 2 output (with cross-refs)
+    identifiers = Column(JSON, nullable=True)  # [{ref, type, content}, ...] DEPRECATED
+    cross_refs = Column(JSON, nullable=True)  # [{target_sheet, relationship}, ...] DEPRECATED
+    pass1_output = Column(JSON, nullable=True)  # Full Pass 1 structured output
+    inbound_references = Column(JSON, nullable=True)  # Computed after Pass 1, context added after Pass 2
+    pass2_output = Column(JSON, nullable=True)  # Full Pass 2 structured output
+    processing_status = Column(String, default="unprocessed")  
+    # unprocessed, pass1_processing, pass1_complete, pass2_processing, pass2_complete
+    retry_count = Column(Integer, default=0)  # Tracks Pass 1 retry attempts
 
     # Relationships
     file = relationship("ProjectFile", back_populates="page_contexts")
     context_pointers = relationship("ContextPointer", back_populates="page_context", cascade="all, delete-orphan")
+    discipline = relationship("DisciplineContext", back_populates="pages")
 
-    # Unique constraint: one context per file+page
+    # Unique constraint and indexes
     __table_args__ = (
         UniqueConstraint('file_id', 'page_number', name='uq_page_context'),
+        Index('idx_page_contexts_discipline', 'discipline_code'),
+        Index('idx_page_contexts_status', 'processing_status'),
+    )
+
+
+class DisciplineContext(Base):
+    """Discipline context model - aggregated context for construction disciplines."""
+    __tablename__ = "discipline_contexts"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False)
+    code = Column(String, nullable=False)  # A, S, M, E, P, FP, C, L, G
+    name = Column(String, nullable=False)  # Architectural, Structural, Mechanical, etc.
+    context_description = Column(Text, nullable=True)  # Pass 3 output
+    key_contents = Column(JSON, nullable=True)  # [{item, type, sheet}, ...]
+    connections = Column(JSON, nullable=True)  # [{discipline, relationship}, ...]
+    processing_status = Column(String, default="waiting")
+    # waiting, ready, processing, complete
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    project = relationship("Project", back_populates="discipline_contexts")
+    pages = relationship("PageContext", back_populates="discipline")
+
+    # Unique constraint and indexes
+    __table_args__ = (
+        UniqueConstraint('project_id', 'code', name='uq_discipline_project_code'),
+        Index('idx_discipline_project', 'project_id'),
+        Index('idx_discipline_status', 'processing_status'),
     )
 
 

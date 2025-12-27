@@ -80,12 +80,6 @@ def get_highlights_from_ids(ids: List[str], pointers_data: List[Dict[str, Any]])
                 norm_w = (bbox["x1"] - bbox["x0"]) / pw if pw else 0
                 norm_h = (bbox["y1"] - bbox["y0"]) / ph if ph else 0
                 
-                # #region agent log
-                import json, time
-                with open("/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log", "a") as _dbg:
-                    _dbg.write(json.dumps({"sessionId":"debug-session","runId":"coord-debug","hypothesisId":"H2-normalize","location":"agent.py:get_highlights_from_ids","message":"Highlight normalization","data":{"element_id":el.get("id"),"element_bbox":bbox,"clip_rect":clip_rect,"px":px,"py":py,"pw":pw,"ph":ph,"norm_x":norm_x,"norm_y":norm_y,"norm_w":norm_w,"norm_h":norm_h,"text_preview":el.get("text","")[:40]},"timestamp":int(time.time()*1000)})+"\n")
-                # #endregion
-                
                 highlights.append({
                     "pointer_id": pointer["id"],
                     "bbox_normalized": {

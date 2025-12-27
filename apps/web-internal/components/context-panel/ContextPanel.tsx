@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { SheetContext } from '../../types/context';
@@ -30,6 +30,8 @@ import {
     FolderIcon,
     PlusIcon
 } from '../Icons';
+import { PagesTab } from './PagesTab';
+import { DisciplinesTab } from './DisciplinesTab';
 import { 
     commitBatch, 
     BatchCommitRequest, 
@@ -45,7 +47,7 @@ import {
     deleteAllProjectPointers
 } from '../../utils/api';
 
-type ViewMode = 'global' | 'context' | 'processed';
+type ViewMode = 'pointers' | 'pages' | 'disciplines';
 
 interface ContextPanelProps {
     sheetContexts: Record<string, SheetContext>;
@@ -160,12 +162,23 @@ const TreeView: React.FC<{
     );
 };
 
-// Image Lightbox component for viewing snapshots at full size
+// Image Lightbox component for viewing snapshots at full size with zoom and pan
 const ImageLightbox: React.FC<{
     imageUrl: string;
     alt: string;
     onClose: () => void;
 }> = ({ imageUrl, alt, onClose }) => {
+    // Zoom state
+    const [zoom, setZoom] = useState(1);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const containerRef = useRef<HTMLDivElement>(null);
+    
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 4;
+    const ZOOM_STEP = 0.25;
+
     // Close on Escape key
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -176,6 +189,56 @@ const ImageLightbox: React.FC<{
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [onClose]);
+
+    // Handle mouse wheel zoom
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+        setZoom(prev => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev + delta)));
+    }, []);
+
+    // Zoom controls
+    const handleZoomIn = useCallback(() => {
+        setZoom(prev => Math.min(MAX_ZOOM, prev + ZOOM_STEP));
+    }, []);
+
+    const handleZoomOut = useCallback(() => {
+        setZoom(prev => Math.max(MIN_ZOOM, prev - ZOOM_STEP));
+    }, []);
+
+    const handleReset = useCallback(() => {
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+    }, []);
+
+    // Pan handlers
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if (zoom > 1) {
+            e.preventDefault();
+            setIsDragging(true);
+            setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+        }
+    }, [zoom, position]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (isDragging && zoom > 1) {
+            setPosition({
+                x: e.clientX - dragStart.x,
+                y: e.clientY - dragStart.y
+            });
+        }
+    }, [isDragging, dragStart, zoom]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsDragging(false);
+    }, []);
+
+    // Reset position when zoom goes back to 1
+    useEffect(() => {
+        if (zoom <= 1) {
+            setPosition({ x: 0, y: 0 });
+        }
+    }, [zoom]);
 
     return (
         <>
@@ -191,14 +254,54 @@ const ImageLightbox: React.FC<{
                 .lightbox-backdrop {
                     animation: lightbox-fade-in 0.2s ease-out forwards;
                 }
-                .lightbox-image {
+                .lightbox-image-container {
                     animation: lightbox-scale-in 0.2s ease-out forwards;
                 }
             `}</style>
             <div 
                 className="lightbox-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
                 onClick={onClose}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
             >
+                {/* Zoom controls */}
+                <div 
+                    className="absolute top-4 left-4 flex items-center gap-2 z-10"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <button
+                        onClick={handleZoomIn}
+                        disabled={zoom >= MAX_ZOOM}
+                        className="p-2 bg-gray-800/80 hover:bg-gray-700 text-gray-300 hover:text-white rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        aria-label="Zoom in"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12M6 12h12" />
+                        </svg>
+                    </button>
+                    <button
+                        onClick={handleZoomOut}
+                        disabled={zoom <= MIN_ZOOM}
+                        className="p-2 bg-gray-800/80 hover:bg-gray-700 text-gray-300 hover:text-white rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        aria-label="Zoom out"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 12h12" />
+                        </svg>
+                    </button>
+                    <button
+                        onClick={handleReset}
+                        className="px-3 py-2 bg-gray-800/80 hover:bg-gray-700 text-gray-300 hover:text-white rounded-full transition-colors text-xs font-medium"
+                        aria-label="Reset zoom"
+                    >
+                        Reset
+                    </button>
+                    <span className="text-xs text-gray-400 ml-2">
+                        {Math.round(zoom * 100)}%
+                    </span>
+                </div>
+
                 {/* Close button */}
                 <button
                     onClick={onClose}
@@ -210,19 +313,33 @@ const ImageLightbox: React.FC<{
                 
                 {/* Image container */}
                 <div 
-                    className="lightbox-image relative max-w-[90vw] max-h-[90vh]"
+                    ref={containerRef}
+                    className="lightbox-image-container relative overflow-hidden"
+                    style={{ 
+                        maxWidth: '90vw', 
+                        maxHeight: '90vh',
+                        cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                    }}
                     onClick={(e) => e.stopPropagation()}
+                    onMouseDown={handleMouseDown}
+                    onWheel={handleWheel}
                 >
                     <img 
                         src={imageUrl} 
                         alt={alt} 
-                        className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+                        className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl select-none"
+                        style={{
+                            transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
+                            transformOrigin: 'center center',
+                            transition: isDragging ? 'none' : 'transform 0.1s ease-out'
+                        }}
+                        draggable={false}
                     />
                 </div>
                 
                 {/* Hint text */}
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-gray-500">
-                    Click outside or press Escape to close
+                    {zoom > 1 ? 'Drag to pan • Scroll to zoom • Escape to close' : 'Scroll to zoom • Click outside or press Escape to close'}
                 </div>
             </div>
         </>
@@ -873,7 +990,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
     onAddGlobalToContext,
 }) => {
     const [isResizing, setIsResizing] = useState(false);
-    const [viewMode, setViewMode] = useState<ViewMode>('global');
+    const [viewMode, setViewMode] = useState<ViewMode>('pointers');
     const [exportSuccess, setExportSuccess] = useState<string | null>(null);
     const [showPreviewModal, setShowPreviewModal] = useState(false);
     const [contextPreview, setContextPreview] = useState<ContextPreviewResponse | null>(null);
@@ -891,6 +1008,12 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
     const [showClearAnnotationsConfirm, setShowClearAnnotationsConfirm] = useState(false);
     const [isClearingAnnotations, setIsClearingAnnotations] = useState(false);
     const [clearAnnotationsError, setClearAnnotationsError] = useState<string | null>(null);
+    
+    // Lightbox state for viewing crop images at full size
+    const [lightboxImage, setLightboxImage] = useState<{ url: string; alt: string } | null>(null);
+    
+    // Pointers view state - for expanded items in the list
+    const [expandedPointerIds, setExpandedPointerIds] = useState<Set<string>>(new Set());
     
     const { isExporting, error: exportError, exportBatch } = useN8NExport();
     
@@ -926,7 +1049,25 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         expandAll,
         collapseAll,
     } = useProjectContext(projectId);
-    
+
+    // Build pointer lookup map for PagesTab (includes bounds for snap-to-bbox feature)
+    const pointerLookup = useMemo(() => {
+        const map = new Map<string, { title: string; description: string | null; bounds?: { xNorm: number; yNorm: number; wNorm: number; hNorm: number } }>();
+        if (!contextData) return map;
+        for (const file of contextData.files) {
+            for (const page of file.pages) {
+                for (const pointer of page.pointers) {
+                    map.set(pointer.id, {
+                        title: pointer.title,
+                        description: pointer.description,
+                        bounds: pointer.bounds,
+                    });
+                }
+            }
+        }
+        return map;
+    }, [contextData]);
+
     // Processing status polling
     const { 
         status: processingStatus, 
@@ -940,20 +1081,51 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         autoStart: false 
     });
     
-    // Start polling when a plan is selected and we're in context view
+    // Auto-fetch project preview when switching to pointers view
     useEffect(() => {
-        if (selectedPlanId && viewMode === 'context') {
-            startPolling();
+        if (viewMode === 'pointers' && projectId && !projectPreview && !isLoadingProjectPreview) {
+            setIsLoadingProjectPreview(true);
+            fetchProjectCommitPreview(projectId)
+                .then(data => {
+                    setProjectPreview(data);
+                    setProjectPreviewError(null);
+                })
+                .catch(err => {
+                    setProjectPreviewError(err instanceof Error ? err.message : 'Failed to load pointers');
+                })
+                .finally(() => {
+                    setIsLoadingProjectPreview(false);
+                });
         }
-    }, [selectedPlanId, viewMode, startPolling]);
+    }, [viewMode, projectId, projectPreview, isLoadingProjectPreview]);
     
-    // Load persisted AI-processed pointers when switching to processed view
-    // This restores the view after browser refresh
-    useEffect(() => {
-        if (viewMode === 'processed' && processedPointers.length === 0 && projectId && !aiIsProcessing) {
-            loadPersistedPointers(projectId);
+    // Toggle pointer expansion in Pointers view
+    const togglePointerExpand = useCallback((pointerId: string) => {
+        setExpandedPointerIds(prev => {
+            const next = new Set(prev);
+            if (next.has(pointerId)) {
+                next.delete(pointerId);
+            } else {
+                next.add(pointerId);
+            }
+            return next;
+        });
+    }, []);
+    
+    // Refresh pointers data
+    const refreshPointersData = useCallback(async () => {
+        if (!projectId) return;
+        setIsLoadingProjectPreview(true);
+        try {
+            const data = await fetchProjectCommitPreview(projectId);
+            setProjectPreview(data);
+            setProjectPreviewError(null);
+        } catch (err) {
+            setProjectPreviewError(err instanceof Error ? err.message : 'Failed to load pointers');
+        } finally {
+            setIsLoadingProjectPreview(false);
         }
-    }, [viewMode, processedPointers.length, projectId, aiIsProcessing, loadPersistedPointers]);
+    }, [projectId]);
 
     // Sort sheets alphabetically by fileName
     const sortedSheets = useMemo(() => {
@@ -1022,7 +1194,6 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         // #endregion
 
         if (sheetsToProcess.length === 0) return;
-        setViewMode('processed');
         await processWithAI(`batch_${Date.now()}`, sheetsToProcess);
     }, [sheetContexts, processWithAI]);
     
@@ -1096,9 +1267,6 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
         // Close modal
         setShowProjectPreviewModal(false);
         setProjectPreview(null);
-        
-        // Switch to processed view
-        setViewMode('processed');
         
         // Build sheets with only unprocessed pointers
         const sheetsToProcess = projectPreview.files
@@ -1193,126 +1361,41 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                     {/* View Mode Toggle */}
                     <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
                         <button
-                            onClick={() => setViewMode('global')}
+                            onClick={() => setViewMode('pointers')}
                             className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                                viewMode === 'global'
+                                viewMode === 'pointers'
                                     ? 'bg-gray-700 text-cyan-400'
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
-                            title="All project context"
+                            title="View by pointers"
                         >
-                            Global
+                            Pointers
                         </button>
                         <button
-                            onClick={() => setViewMode('context')}
+                            onClick={() => setViewMode('pages')}
                             className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                                viewMode === 'context'
+                                viewMode === 'pages'
                                     ? 'bg-gray-700 text-cyan-400'
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
-                            title="Current file context"
+                            title="View by pages"
                         >
-                            File
+                            Pages
                         </button>
                         <button
-                            onClick={() => setViewMode('processed')}
+                            onClick={() => setViewMode('disciplines')}
                             className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
-                                viewMode === 'processed'
+                                viewMode === 'disciplines'
                                     ? 'bg-gray-700 text-cyan-400'
                                     : 'text-gray-500 hover:text-gray-300'
                             }`}
-                            title="AI processed results"
+                            title="View by disciplines"
                         >
-                            Processed
+                            Disciplines
                         </button>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {/* Add to Context Button - only show in global view */}
-                    {viewMode === 'global' && onAddGlobalToContext && (
-                        <>
-                            <button
-                                onClick={() => {
-                                    if (contextData?.files) {
-                                        onAddGlobalToContext(contextData.files);
-                                        setViewMode('context');
-                                    }
-                                }}
-                                disabled={isLoadingContext || !contextData?.files?.length}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
-                                    isLoadingContext || !contextData?.files?.length
-                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                        : 'bg-cyan-600 hover:bg-cyan-500 text-white'
-                                }`}
-                                title={!contextData?.files?.length ? 'No files to add' : 'Add all global files to File context'}
-                            >
-                                <PlusIcon className="w-3.5 h-3.5" />
-                                Add to Context
-                            </button>
-                            {/* Clear All Annotations Button */}
-                            {contextData && contextData.totalPointers > 0 && (
-                                <button
-                                    onClick={() => setShowClearAnnotationsConfirm(true)}
-                                    disabled={isClearingAnnotations}
-                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded transition-colors disabled:opacity-50"
-                                    title="Delete all context pointers from database"
-                                >
-                                    <TrashIcon className="w-3.5 h-3.5" />
-                                    {isClearingAnnotations ? 'Clearing...' : 'Clear All'}
-                                </button>
-                            )}
-                        </>
-                    )}
-                    {/* Process with AI Button - only show in context view */}
-                    {viewMode === 'context' && (
-                        <button
-                            onClick={handleProcessWithAI}
-                            disabled={aiIsProcessing || !Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
-                                aiIsProcessing || !Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0)
-                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                    : 'bg-cyan-600 hover:bg-cyan-500 text-white'
-                            }`}
-                            title={!Object.values(sheetContexts).some(sc => sc.addedToContext && sc.pointers.length > 0) ? 'Add context pointers first' : 'Process with AI'}
-                        >
-                            {aiIsProcessing ? (
-                                <>
-                                    <SpinnerIcon className="w-3.5 h-3.5" />
-                                    Processing...
-                                </>
-                            ) : (
-                                <>
-                                    <CloudArrowUpIcon className="w-3.5 h-3.5" />
-                                    Process with AI
-                                </>
-                            )}
-                        </button>
-                    )}
-                    {/* Commit to ViewM4D Button - only show in processed view */}
-                    {viewMode === 'processed' && (
-                        <button
-                            onClick={handleLoadProjectPreview}
-                            disabled={isLoadingProjectPreview}
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
-                                isLoadingProjectPreview
-                                    ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                    : 'bg-green-600 hover:bg-green-500 text-white'
-                            }`}
-                            title="Preview and commit all context pointers to ViewM4D database"
-                        >
-                            {isLoadingProjectPreview ? (
-                                <>
-                                    <SpinnerIcon className="w-3.5 h-3.5" />
-                                    Loading...
-                                </>
-                            ) : (
-                                <>
-                                    <DatabaseIcon className="w-3.5 h-3.5" />
-                                    Preview Commit
-                                </>
-                            )}
-                        </button>
-                    )}
                     <button
                         onClick={onToggleCollapse}
                         className="p-1.5 hover:bg-gray-800 rounded transition-colors"
@@ -1344,46 +1427,6 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                 </div>
             )}
             
-            {/* Processing Status Bar */}
-            {viewMode === 'context' && processingStatus && processingStatus.total > 0 && (
-                <div className="mx-4 mt-2">
-                    {isProcessing ? (
-                        // Processing in progress
-                        <div className="px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg flex items-center gap-2">
-                            <SpinnerIcon className="w-4 h-4 text-cyan-400" />
-                            <span className="text-xs text-cyan-300 font-medium">
-                                Processing: {processingStatus.completed}/{processingStatus.total}
-                            </span>
-                            <button 
-                                onClick={refreshStatus}
-                                className="ml-auto p-1 hover:bg-cyan-500/20 rounded transition-colors"
-                                title="Refresh status"
-                            >
-                                <RefreshIcon className="w-3 h-3 text-cyan-400" />
-                            </button>
-                        </div>
-                    ) : processingHasErrors ? (
-                        // Has errors
-                        <div className="px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2">
-                            <ExclamationCircleIcon className="w-4 h-4 text-amber-400" />
-                            <span className="text-xs text-amber-300 font-medium">
-                                {processingStatus.errors} page{processingStatus.errors !== 1 ? 's' : ''} failed
-                            </span>
-                            <span className="text-xs text-gray-500">
-                                ({processingStatus.completed}/{processingStatus.total} complete)
-                            </span>
-                        </div>
-                    ) : processingComplete ? (
-                        // All complete
-                        <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-2">
-                            <CheckIcon className="w-4 h-4 text-green-400" />
-                            <span className="text-xs text-green-300 font-medium">
-                                All pages processed
-                            </span>
-                        </div>
-                    ) : null}
-                </div>
-            )}
             
             {/* Preview Error Toast */}
             {previewError && (
@@ -1400,150 +1443,238 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
             )}
 
             {/* Content Area */}
-            {viewMode === 'global' ? (
-                <>
-                    {/* Global Context View: All project files */}
-                    <div className="flex-1 flex overflow-hidden">
-                        {/* Left: Global File Tree */}
-                        <div className="w-[350px] min-w-[200px] max-w-[350px] border-r border-gray-700 overflow-hidden">
-                            <GlobalTreeView
-                                files={contextData?.files || []}
-                                selection={globalSelection}
-                                expandedFiles={expandedFiles}
-                                expandedPages={expandedPages}
-                                onToggleFileExpand={toggleFileExpand}
-                                onTogglePageExpand={togglePageExpand}
-                                onSelectFile={selectFile}
-                                onSelectPage={selectPage}
-                                onSelectPointer={selectPointer}
-                                onPointerDoubleClick={onPointerNavigate}
-                                isLoading={isLoadingContext}
-                                error={contextError}
-                                onRefresh={fetchContext}
-                            />
-                        </div>
-                        {/* Right: Preview */}
-                        <div className="flex-1 overflow-hidden">
-                            <GlobalPreviewView
-                                selectionType={globalSelection.type}
-                                selectedFile={selectedFile}
-                                selectedPage={selectedPage}
-                                selectedPointer={selectedPointer}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Footer with Global Stats */}
-                    <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
-                        <div className="text-[10px] text-gray-500">
-                            {contextData ? (
-                                <>
-                                    <span>{contextData.totalFiles} files</span>
-                                    <span className="mx-1">•</span>
-                                    <span>{contextData.totalPages} pages</span>
-                                    <span className="mx-1">•</span>
-                                    <span>{contextData.totalPointers} pointers</span>
-                                    <span className="mx-1">•</span>
-                                    <span className="text-green-400">{contextData.pagesComplete} complete</span>
-                                </>
-                            ) : (
-                                <span>Loading...</span>
-                            )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={collapseAll}
-                                className="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
-                            >
-                                Collapse All
-                            </button>
-                            <button
-                                onClick={expandAll}
-                                className="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
-                            >
-                                Expand All
-                            </button>
-                            <button
-                                onClick={fetchContext}
-                                className="p-1 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
-                                title="Refresh"
-                            >
-                                <RefreshIcon className="w-3.5 h-3.5" />
-                            </button>
-                        </div>
-                    </div>
-                </>
-            ) : viewMode === 'context' ? (
-                <>
-                    {/* Current File Context View */}
-                    <div className="flex-1 flex overflow-hidden">
-                        {/* Left: File Tree */}
-                        <div className="w-[180px] min-w-[150px] max-w-[200px] border-r border-gray-700 overflow-y-auto custom-scrollbar">
-                            <TreeView
-                                sheets={sortedSheets}
-                                selectedSheetId={selectedSheetId}
-                                onSelectSheet={onSelectSheet}
-                            />
-                        </div>
-                        {/* Right: Markdown Preview */}
-                        <div className="flex-1 overflow-hidden">
-                            <PreviewView selectedSheet={selectedSheet} />
-                        </div>
-                    </div>
-
-                    {/* Footer with Stats and Preview Button */}
-                    <div className="px-4 py-2 border-t border-gray-800 flex items-center justify-between">
-                        <div className="text-[10px] text-gray-500">
-                            <span>{stats.total} sheets | {stats.totalPointers} pointers</span>
-                            <span className="mx-2">•</span>
-                            <span>{stats.complete}/{stats.withPointers} generated</span>
-                        </div>
-                        {selectedPlanId && (
-                            <button
-                                onClick={handleLoadContextPreview}
-                                disabled={isLoadingPreview || (processingStatus?.total === 0)}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors ${
-                                    isLoadingPreview || (processingStatus?.total === 0)
-                                        ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                        : isProcessing
-                                            ? 'bg-amber-600/80 hover:bg-amber-500 text-white'
-                                            : 'bg-green-600 hover:bg-green-500 text-white'
-                                }`}
-                                title={
-                                    processingStatus?.total === 0
-                                        ? 'No pages have been processed yet'
-                                        : isProcessing
-                                            ? 'Processing in progress - preview may be incomplete'
-                                            : 'Load context preview'
-                                }
-                            >
-                                {isLoadingPreview ? (
-                                    <>
-                                        <SpinnerIcon className="w-3.5 h-3.5" />
-                                        Loading...
-                                    </>
-                                ) : (
-                                    <>
-                                        <EyeIcon className="w-3.5 h-3.5" />
-                                        Load Context Preview
-                                    </>
+            {viewMode === 'pointers' ? (
+                /* Pointers View - All project pointers with full details */
+                <div className="flex flex-col h-full min-h-0">
+                    <div className="flex-none px-4 py-3 border-b border-gray-700">
+                        <div className="flex items-center justify-between">
+                            <h3 className="font-medium text-gray-200">Pointers</h3>
+                            <div className="flex items-center gap-2">
+                                {projectPreview && (
+                                    <span className="text-xs text-gray-500">
+                                        {projectPreview.summary.totalPointers} total
+                                        {projectPreview.summary.pointersWithAi > 0 && (
+                                            <span className="ml-1 text-cyan-400">
+                                                ({projectPreview.summary.pointersWithAi} with AI)
+                                            </span>
+                                        )}
+                                    </span>
                                 )}
-                            </button>
+                                <button
+                                    onClick={refreshPointersData}
+                                    disabled={isLoadingProjectPreview}
+                                    className="p-1 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors disabled:opacity-50"
+                                    title="Refresh"
+                                >
+                                    <RefreshIcon className={`w-3.5 h-3.5 ${isLoadingProjectPreview ? 'animate-spin' : ''}`} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8 custom-scrollbar min-h-0">
+                        {isLoadingProjectPreview && !projectPreview ? (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                <SpinnerIcon className="w-8 h-8 mb-3 text-cyan-400" />
+                                <p className="text-sm">Loading pointers...</p>
+                            </div>
+                        ) : projectPreviewError && !projectPreview ? (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                <ExclamationCircleIcon className="w-8 h-8 mb-3 text-amber-500" />
+                                <p className="text-sm text-amber-400">{projectPreviewError}</p>
+                                <button
+                                    onClick={refreshPointersData}
+                                    className="mt-3 px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors"
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        ) : !projectPreview || projectPreview.summary.totalPointers === 0 ? (
+                            <div className="text-center py-12 text-gray-500">
+                                <DocumentIcon className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                                <p>No pointers yet</p>
+                                <p className="text-sm mt-1 text-gray-600">
+                                    Create context pointers on PDF pages to see them here.
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4 pb-4">
+                                {projectPreview.files
+                                    .filter(file => file.pointerCount > 0)
+                                    .map(file => (
+                                        <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/30">
+                                            {/* File header */}
+                                            <button
+                                                onClick={() => toggleFileExpand(file.id)}
+                                                className="w-full px-4 py-2 bg-gray-800 border-b border-gray-700 flex items-center gap-2 hover:bg-gray-750 transition-colors"
+                                            >
+                                                <ChevronDownIcon className={`w-4 h-4 text-gray-500 transition-transform ${expandedFiles.has(file.id) ? '' : '-rotate-90'}`} />
+                                                <DocumentIcon className="w-4 h-4 text-cyan-400" />
+                                                <h4 className="font-medium text-sm text-gray-200 flex-1 text-left truncate">{file.name}</h4>
+                                                <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">
+                                                    {file.pointerCount} pointer{file.pointerCount !== 1 ? 's' : ''}
+                                                </span>
+                                                {file.pointersWithAi > 0 && (
+                                                    <span className="text-xs text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                                                        {file.pointersWithAi} AI
+                                                    </span>
+                                                )}
+                                            </button>
+
+                                            {/* Pointers list */}
+                                            {expandedFiles.has(file.id) && (
+                                                <div className="divide-y divide-gray-700/50">
+                                                    {file.pointers.map(pointer => (
+                                                        <div key={pointer.id} className="bg-gray-900/30">
+                                                            {/* Pointer header - clickable to expand */}
+                                                            <button
+                                                                onClick={() => togglePointerExpand(pointer.id)}
+                                                                className="w-full px-4 py-3 flex items-start gap-3 hover:bg-gray-800/50 text-left transition-colors"
+                                                            >
+                                                                <ChevronDownIcon className={`w-4 h-4 text-gray-500 transition-transform mt-0.5 flex-shrink-0 ${expandedPointerIds.has(pointer.id) ? '' : '-rotate-90'}`} />
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <p className="font-medium text-sm text-gray-200 truncate">
+                                                                            {pointer.title}
+                                                                        </p>
+                                                                        {pointer.aiAnalysis?.tradeCategory && (
+                                                                            <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded flex-shrink-0">
+                                                                                {pointer.aiAnalysis.tradeCategory}
+                                                                            </span>
+                                                                        )}
+                                                                        {pointer.committedAt && (
+                                                                            <CheckIcon className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                                                                        )}
+                                                                    </div>
+                                                                    <p className="text-xs text-gray-500 mt-0.5">
+                                                                        Page {pointer.pageNumber}
+                                                                        {pointer.description && (
+                                                                            <span className="ml-2 text-gray-400">• {pointer.description}</span>
+                                                                        )}
+                                                                    </p>
+                                                                </div>
+                                                            </button>
+
+                                                            {/* Expanded pointer details */}
+                                                            {expandedPointerIds.has(pointer.id) && (
+                                                                <div className="px-4 py-4 bg-gray-800/50 border-t border-gray-700/50 space-y-4">
+                                                                    {/* Crop Image */}
+                                                                    <div>
+                                                                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                                                            Crop Image (AI Input)
+                                                                        </p>
+                                                                        <div 
+                                                                            className="bg-gray-900 rounded-lg p-2 border border-gray-700 cursor-pointer hover:border-gray-600 transition-colors"
+                                                                            onDoubleClick={() => setLightboxImage({ 
+                                                                                url: getPointerCropImageUrl(pointer.id), 
+                                                                                alt: pointer.title || 'Pointer crop' 
+                                                                            })}
+                                                                            title="Double-click to view full size"
+                                                                        >
+                                                                            <img 
+                                                                                src={getPointerCropImageUrl(pointer.id)}
+                                                                                alt="Pointer crop"
+                                                                                className="max-h-48 object-contain rounded"
+                                                                                onError={(e) => {
+                                                                                    (e.target as HTMLImageElement).style.display = 'none';
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* AI Analysis Section */}
+                                                                    {pointer.aiAnalysis ? (
+                                                                        <>
+                                                                            {/* Technical Description */}
+                                                                            {pointer.aiAnalysis.technicalDescription && (
+                                                                                <div>
+                                                                                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                                        Technical Description
+                                                                                    </p>
+                                                                                    <p className="text-sm text-gray-300">
+                                                                                        {pointer.aiAnalysis.technicalDescription}
+                                                                                    </p>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Trade Category */}
+                                                                            {pointer.aiAnalysis.tradeCategory && (
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <span className="text-[10px] font-semibold text-gray-500 uppercase">Trade:</span>
+                                                                                    <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 text-xs font-medium rounded">
+                                                                                        {pointer.aiAnalysis.tradeCategory}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Identified Elements */}
+                                                                            {pointer.aiAnalysis.identifiedElements && pointer.aiAnalysis.identifiedElements.length > 0 && (
+                                                                                <div>
+                                                                                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                                        Identified Elements
+                                                                                    </p>
+                                                                                    <div className="flex flex-wrap gap-1">
+                                                                                        {pointer.aiAnalysis.identifiedElements.map((el, i) => (
+                                                                                            <span key={i} className="px-2 py-0.5 bg-gray-700 border border-gray-600 rounded text-xs text-gray-300">
+                                                                                                {typeof el === 'string' ? el : el.name}
+                                                                                            </span>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Recommendations */}
+                                                                            {pointer.aiAnalysis.recommendations && (
+                                                                                <div>
+                                                                                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                                        Recommendations
+                                                                                    </p>
+                                                                                    <p className="text-sm text-gray-300">
+                                                                                        {pointer.aiAnalysis.recommendations}
+                                                                                    </p>
+                                                                                </div>
+                                                                            )}
+                                                                        </>
+                                                                    ) : (
+                                                                        <div className="text-center py-4 text-gray-500">
+                                                                            <p className="text-sm">No AI analysis yet</p>
+                                                                            <p className="text-xs mt-1 text-gray-600">
+                                                                                Process this pointer with AI to see analysis.
+                                                                            </p>
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Original Metadata */}
+                                                                    {pointer.description && (
+                                                                        <div>
+                                                                            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                                                                Original Description
+                                                                            </p>
+                                                                            <p className="text-sm text-gray-400">
+                                                                                {pointer.description}
+                                                                            </p>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                            </div>
                         )}
                     </div>
-                </>
+                </div>
+            ) : viewMode === 'pages' ? (
+                /* Pages View - Context Tree Processing */
+                <div className="flex flex-col flex-1 min-h-0">
+                    <PagesTab projectId={projectId} pointerLookup={pointerLookup} />
+                </div>
             ) : (
-                /* Streaming Processed View */
-                <div className="flex-1 overflow-hidden">
-                    <StreamingProcessedView
-                        isProcessing={aiIsProcessing}
-                        progress={aiProgress}
-                        processedPointers={processedPointers}
-                        error={aiError}
-                        onCancel={cancelProcessing}
-                        onReset={resetAIProcessing}
-                        projectId={projectId}
-                    />
+                /* Disciplines View - Context Tree Processing */
+                <div className="flex flex-col flex-1 min-h-0">
+                    <DisciplinesTab projectId={projectId} />
                 </div>
             )}
             
@@ -1653,6 +1784,15 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Image Lightbox for crop images */}
+            {lightboxImage && (
+                <ImageLightbox
+                    imageUrl={lightboxImage.url}
+                    alt={lightboxImage.alt}
+                    onClose={() => setLightboxImage(null)}
+                />
             )}
         </div>
     );

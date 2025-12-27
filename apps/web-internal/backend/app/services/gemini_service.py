@@ -31,7 +31,7 @@ TIMEOUT = 30.0  # seconds
 
 # Token limits for efficiency at scale
 PAGE_ANALYSIS_MAX_TOKENS = 500
-HIGHLIGHT_ANALYSIS_MAX_TOKENS = 1000
+HIGHLIGHT_ANALYSIS_MAX_TOKENS = 10000
 CONTEXT_POINTER_MAX_TOKENS = 8192  # High limit for complete extraction of large keynote tables
 
 
@@ -168,112 +168,208 @@ Keep the response to 2-4 sentences. Be specific and technical but accessible to 
         
     except Exception as e:
         logger.error(f"Failed to analyze page {page_number} of {file_name}: {e}")
-        # #region agent log H6
-        import json as _json, traceback as _tb; open('/Users/seanschneidewent/Maestro4D-2/.cursor/debug.log','a').write(_json.dumps({"hypothesisId":"H6","location":"gemini_service.py:analyze_page","message":"Exception caught","data":{"error_type":type(e).__name__,"error_msg":str(e),"traceback":_tb.format_exc()},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session"})+'\n')
-        # #endregion
         return "[Analysis unavailable]"
 
 
 async def analyze_highlight(
     image_bytes: bytes,
     page_context: str,
-    bbox: dict
+    bbox: dict,
+    all_page_spans: list[dict] = None
 ) -> dict:
     """
-    Analyze a highlighted region from a construction plan.
+    Analyze a highlighted region - full analysis in one shot using JSON response mode.
     
     Args:
         image_bytes: The cropped highlight region as bytes
         page_context: Description of the parent page (from analyze_page)
         bbox: Bounding box dict with x, y, width, height (for context, not used in prompt)
+        all_page_spans: List of all text spans on the page for vision-based matching
     
     Returns:
-        {"title": "Short Title", "description": "1-2 sentence description"}
-        On error: {"title": "Highlight", "description": "[Analysis unavailable]"}
+        {
+            "title": str,
+            "description": str,
+            "technicalDescription": str,
+            "tradeCategory": str,
+            "identifiedElements": [{"name": str, "type": str, "details": str}, ...],
+            "measurements": [{"value": str, "unit": str, "context": str}, ...],
+            "issues": [{"severity": str, "description": str}, ...],
+            "recommendations": str,
+            "visible_span_ids": [str, ...]
+        }
+        On error: Returns fallback dict with empty/default values
     """
     if not _configure_client():
-        return {
-            "title": "Highlight",
-            "description": "[Analysis unavailable: API key not configured]"
-        }
+        return _get_highlight_fallback("API key not configured")
     
     try:
-        model = _get_model()
+        # Format spans for the prompt (just id and text, not bbox)
+        span_list = "\n".join([f'{s["id"]}: "{s["text"]}"' for s in (all_page_spans or [])])
         
-        prompt = f"""This is a highlighted region from a construction drawing.
+        # Build JSON-focused prompt
+        prompt = f"""Analyze this highlighted region from a construction drawing.
 
 Parent page context: {page_context}
 
-Provide structural guidance for detailed extraction. Do NOT transcribe the content—just describe what's there.
+Return a JSON object with this exact structure:
 
-1. TITLE: What type of content is this? (3-6 words)
+{{
+    "title": "3-6 word description of content type (e.g., 'General Accessibility Notes', 'Keynote Legend', 'Door Schedule')",
+    "description": "One sentence describing the content and its purpose",
+    "technicalDescription": "A summary paragraph describing content type/format, total count of items, and disciplines/trades covered",
+    "tradeCategory": "exactly one of: architectural, structural, mechanical, electrical, plumbing, fire_protection, general",
+    "identifiedElements": [
+        {{"name": "full verbatim text of item", "type": "keynote|note|schedule_row|dimension|callout|specification", "details": "brief explanation"}}
+    ],
+    "measurements": [
+        {{"value": "dimension value", "unit": "unit type", "context": "what it measures"}}
+    ],
+    "issues": [
+        {{"severity": "info|warning|critical", "description": "description of issue"}}
+    ],
+    "recommendations": "Coordination notes, contractor responsibilities, or things to verify (or empty string if none)",
+    "visible_span_ids": ["span_0", "span_5", "span_12"]
+}}
 
-2. DESCRIPTION: Answer these questions briefly:
-   - Format: Is this a numbered list, table, schedule, detail, diagram, or spec text?
-   - Count: Approximately how many items, rows, or callouts?
-   - Trades: What disciplines are involved? (arch, struct, mech, elec, plumb)
-   - References: Are there drawing cross-references? (detail numbers, sheet refs)
-   - Revisions: Any revision markers, clouds, or delta symbols? Which items?
-   - Special notes: Any GC responsibilities, coordination items, or critical flags?
+EXTRACTION RULES:
+1. Extract EVERY numbered item, row, callout, or distinct element individually - do NOT summarize
+2. For identifiedElements, the "name" field MUST contain the full verbatim text from the image
+3. For measurements, extract any dimensions, heights, clearances visible
+4. For issues, note revision clouds, coordination concerns, missing info
+5. For visible_span_ids, identify ALL span IDs from the list below that are visible in the image
 
-Keep it brief. The next stage will extract specifics directly from the image.
+TEXT SPANS ON PAGE (identify which are visible):
+{span_list}
 
-Respond in exactly this format:
-TITLE: [content type]
-DESCRIPTION: [structural guidance]"""
+Return ONLY valid JSON, no markdown code blocks or extra text."""
 
         image_part = _bytes_to_image_part(image_bytes)
         
+        # Use JSON response mode for reliable parsing
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            generation_config={
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "top_k": 40,
+                "response_mime_type": "application/json",
+                "max_output_tokens": HIGHLIGHT_ANALYSIS_MAX_TOKENS,
+            }
+        )
+        
         def _generate():
-            response = model.generate_content(
-                [prompt, image_part],
-                generation_config={"max_output_tokens": HIGHLIGHT_ANALYSIS_MAX_TOKENS}
-            )
+            response = model.generate_content([prompt, image_part])
             return response.text
         
         result = await _retry_with_backoff(_generate)
         
-        # Parse the structured response
-        return _parse_highlight_response(result)
+        # Debug logging
+        print(f"=== ANALYZE HIGHLIGHT DEBUG ===")
+        print(f"Spans provided: {len(all_page_spans) if all_page_spans else 0}")
+        print(f"Raw response length: {len(result)}")
+        print(f"Raw response:\n{result[:500]}...")
+        print(f"=== END ANALYZE HIGHLIGHT DEBUG ===")
+        
+        # Parse the JSON response
+        return _parse_highlight_json_response(result)
         
     except Exception as e:
         logger.error(f"Failed to analyze highlight: {e}")
-        return {
-            "title": "Highlight",
-            "description": "[Analysis unavailable]"
-        }
+        return _get_highlight_fallback(str(e))
 
 
-def _parse_highlight_response(response_text: str) -> dict:
-    """Parse the structured title/description response from Gemini."""
-    title = "Highlight"
-    description = ""
+def _parse_highlight_json_response(response_text: str) -> dict:
+    """Parse JSON response from analyze_highlight with fallbacks for robustness."""
+    import re
     
-    lines = response_text.strip().split("\n")
+    # Default result structure
+    result = {
+        "title": "Highlight",
+        "description": "",
+        "technicalDescription": "",
+        "tradeCategory": "general",
+        "identifiedElements": [],
+        "measurements": [],
+        "issues": [],
+        "recommendations": "",
+        "visible_span_ids": []
+    }
     
-    for line in lines:
-        line = line.strip()
-        if line.upper().startswith("TITLE:"):
-            title = line[6:].strip()
-        elif line.upper().startswith("DESCRIPTION:"):
-            description = line[12:].strip()
-    
-    # Fallback: if parsing failed, use the whole response as description
-    if not description and response_text.strip():
-        # Check if it's a simple two-line response without labels
-        if len(lines) >= 2 and not any(l.upper().startswith(("TITLE:", "DESCRIPTION:")) for l in lines):
-            title = lines[0].strip()
-            description = " ".join(lines[1:]).strip()
-        else:
-            description = response_text.strip()
-    
-    # Ensure title isn't too long
-    if len(title) > 50:
-        title = title[:47] + "..."
-    
+    try:
+        # Clean response if wrapped in markdown code blocks
+        clean_result = response_text.strip()
+        if clean_result.startswith("```"):
+            lines = clean_result.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            clean_result = "\n".join(lines)
+        
+        # Parse JSON
+        parsed = json.loads(clean_result)
+        
+        # Extract fields with defaults
+        result["title"] = parsed.get("title", "Highlight")[:50].strip() or "Highlight"
+        result["description"] = parsed.get("description", "") or ""
+        result["technicalDescription"] = parsed.get("technicalDescription", "") or ""
+        
+        # Validate trade category
+        trade_cat = parsed.get("tradeCategory", "general")
+        valid_categories = ["architectural", "structural", "mechanical", "electrical", "plumbing", "fire_protection", "general"]
+        result["tradeCategory"] = trade_cat if trade_cat in valid_categories else "general"
+        
+        # Extract arrays with type checking
+        elements = parsed.get("identifiedElements", [])
+        result["identifiedElements"] = elements if isinstance(elements, list) else []
+        
+        measurements = parsed.get("measurements", [])
+        result["measurements"] = measurements if isinstance(measurements, list) else []
+        
+        issues = parsed.get("issues", [])
+        result["issues"] = issues if isinstance(issues, list) else []
+        
+        result["recommendations"] = parsed.get("recommendations", "") or ""
+        
+        # Handle visible_span_ids - can be array of strings or comma-separated in response
+        span_ids = parsed.get("visible_span_ids", [])
+        if isinstance(span_ids, list):
+            result["visible_span_ids"] = [str(s) for s in span_ids]
+        elif isinstance(span_ids, str):
+            # Extract span_XX patterns if it's a string
+            span_matches = re.findall(r'span_\d+', span_ids)
+            result["visible_span_ids"] = list(dict.fromkeys(span_matches))
+        
+        print(f"=== PARSE HIGHLIGHT JSON DEBUG ===")
+        print(f"Title: {result['title']}")
+        print(f"Description: {result['description'][:100]}...")
+        print(f"Trade: {result['tradeCategory']}")
+        print(f"Elements count: {len(result['identifiedElements'])}")
+        print(f"Measurements count: {len(result['measurements'])}")
+        print(f"Issues count: {len(result['issues'])}")
+        print(f"Visible spans count: {len(result['visible_span_ids'])}")
+        print(f"=== END PARSE HIGHLIGHT JSON DEBUG ===")
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse highlight JSON response: {e}\nResponse: {response_text[:500]}")
+        return _get_highlight_fallback(f"JSON parse error: {str(e)}")
+
+
+def _get_highlight_fallback(error_msg: str) -> dict:
+    """Return a valid fallback structure for analyze_highlight when analysis fails."""
     return {
-        "title": title,
-        "description": description
+        "title": "Highlight",
+        "description": f"[Analysis unavailable: {error_msg}]",
+        "technicalDescription": "",
+        "tradeCategory": "general",
+        "identifiedElements": [],
+        "measurements": [],
+        "issues": [{"severity": "warning", "description": f"Error: {error_msg}"}],
+        "recommendations": "",
+        "visible_span_ids": []
     }
 
 

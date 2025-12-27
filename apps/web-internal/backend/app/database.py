@@ -72,13 +72,30 @@ def _run_migrations():
         ("page_contexts", "committed_at", "ALTER TABLE page_contexts ADD COLUMN committed_at DATETIME"),
         # Add committed_at to context_pointers for ViewM4D publishing
         ("context_pointers", "committed_at", "ALTER TABLE context_pointers ADD COLUMN committed_at DATETIME"),
-        # AI Analysis fields for context_pointers (populated after "Process with AI")
+        # AI Analysis fields for context_pointers (populated immediately from single-shot analysis)
         ("context_pointers", "ai_technical_description", "ALTER TABLE context_pointers ADD COLUMN ai_technical_description TEXT"),
         ("context_pointers", "ai_trade_category", "ALTER TABLE context_pointers ADD COLUMN ai_trade_category TEXT"),
         ("context_pointers", "ai_elements", "ALTER TABLE context_pointers ADD COLUMN ai_elements JSON"),
         ("context_pointers", "ai_recommendations", "ALTER TABLE context_pointers ADD COLUMN ai_recommendations TEXT"),
+        ("context_pointers", "ai_measurements", "ALTER TABLE context_pointers ADD COLUMN ai_measurements JSON"),
+        ("context_pointers", "ai_issues", "ALTER TABLE context_pointers ADD COLUMN ai_issues JSON"),
         # Text content for PDF text extraction with bounding boxes
         ("context_pointers", "text_content", "ALTER TABLE context_pointers ADD COLUMN text_content JSON"),
+        # Context tree processing fields for page_contexts
+        ("page_contexts", "sheet_number", "ALTER TABLE page_contexts ADD COLUMN sheet_number TEXT"),
+        ("page_contexts", "page_title", "ALTER TABLE page_contexts ADD COLUMN page_title TEXT"),
+        ("page_contexts", "discipline_code", "ALTER TABLE page_contexts ADD COLUMN discipline_code TEXT"),
+        ("page_contexts", "discipline_id", "ALTER TABLE page_contexts ADD COLUMN discipline_id TEXT REFERENCES discipline_contexts(id)"),
+        ("page_contexts", "quick_description", "ALTER TABLE page_contexts ADD COLUMN quick_description TEXT"),
+        ("page_contexts", "context_description", "ALTER TABLE page_contexts ADD COLUMN context_description TEXT"),
+        ("page_contexts", "updated_context", "ALTER TABLE page_contexts ADD COLUMN updated_context TEXT"),
+        ("page_contexts", "identifiers", "ALTER TABLE page_contexts ADD COLUMN identifiers JSON"),
+        ("page_contexts", "cross_refs", "ALTER TABLE page_contexts ADD COLUMN cross_refs JSON"),
+        ("page_contexts", "processing_status", "ALTER TABLE page_contexts ADD COLUMN processing_status TEXT DEFAULT 'unprocessed'"),
+        ("page_contexts", "retry_count", "ALTER TABLE page_contexts ADD COLUMN retry_count INTEGER DEFAULT 0"),
+        ("page_contexts", "pass1_output", "ALTER TABLE page_contexts ADD COLUMN pass1_output JSON"),
+        ("page_contexts", "inbound_references", "ALTER TABLE page_contexts ADD COLUMN inbound_references JSON"),
+        ("page_contexts", "pass2_output", "ALTER TABLE page_contexts ADD COLUMN pass2_output JSON"),
     ]
     
     with engine.connect() as conn:
