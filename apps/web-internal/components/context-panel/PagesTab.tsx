@@ -388,11 +388,24 @@ const PagePreviewModal: React.FC<{
   // Get page title for header
   const sheetDisplay = page.pageTitle || page.sheetNumber || `Page ${page.pageNumber}`;
 
-  // Compute highlights from pass1_output pointers with outbound refs
+  // Compute highlights from pass1_output pointers with outbound refs AND reference spans
   const highlights = useMemo((): TextHighlight[] => {
     const result: TextHighlight[] = [];
-    const pass1Pointers = page.pass1Output?.pointers || [];
 
+    // 1. Add highlights from reference spans (OCR-detected references)
+    const referenceSpans = page.referenceSpans || [];
+    for (const span of referenceSpans) {
+      result.push({
+        pointerId: `ref_${span.id}`,
+        elementId: span.id,
+        bboxNormalized: span.bboxNormalized,
+        matchedText: span.text,
+        isReferenceSpan: true,  // Flag to style differently if needed
+      });
+    }
+
+    // 2. Add highlights from pass1_output outbound_refs (linked to text elements)
+    const pass1Pointers = page.pass1Output?.pointers || [];
     for (const pointer of pass1Pointers) {
       // Get text_content from the actual ContextPointer (via pointerLookup)
       const pointerData = pointerLookup?.get(pointer.pointer_id);
@@ -428,7 +441,7 @@ const PagePreviewModal: React.FC<{
       }
     }
     return result;
-  }, [page.pass1Output, pointerLookup]);
+  }, [page.pass1Output, page.referenceSpans, pointerLookup]);
 
   // Handle image load to capture natural dimensions
   const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {

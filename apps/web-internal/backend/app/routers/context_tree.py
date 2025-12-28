@@ -11,6 +11,7 @@ Provides endpoints for:
 import asyncio
 import json
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from uuid import uuid4
 
@@ -37,6 +38,59 @@ from ..services.context_tree_processor import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# =============================================================================
+# Reference Span Extraction
+# =============================================================================
+
+# Patterns for detecting reference text
+_REF_PATTERNS = [
+    r'\bSEE\s+[\dA-Z/\.\-]+',           # SEE A201, SEE 3/A401
+    r'\bREFER\s+TO\b',                   # REFER TO...
+    r'\bRE:\s*[\dA-Z/\.\-]+',            # RE: A111
+    r'\b\d+/[A-Z]\d{2,3}',               # 3/A401, 02/A201
+]
+_REF_PATTERN_COMBINED = re.compile('|'.join(_REF_PATTERNS), re.IGNORECASE)
+
+
+def _extract_reference_spans(page_text_spans: Optional[dict]) -> List[dict]:
+    """
+    Extract spans containing reference patterns from cached page_text_spans.
+
+    Uses WORD-LEVEL spans for precise bounding boxes (not line-level).
+    Returns list of spans with normalized bounding boxes for frontend highlighting.
+    """
+    if not page_text_spans:
+        return []
+
+    # Use word-level spans for precise highlighting
+    # Fall back to line-level if words not available (old cached data)
+    words = page_text_spans.get("words", [])
+    if not words:
+        words = page_text_spans.get("spans", [])
+
+    page_width = page_text_spans.get("page_width", 1)
+    page_height = page_text_spans.get("page_height", 1)
+
+    result = []
+    for word in words:
+        text = word.get("text", "")
+        if _REF_PATTERN_COMBINED.search(text):
+            bbox = word.get("bbox", [0, 0, 0, 0])
+            result.append({
+                "id": word.get("id", ""),
+                "text": text,
+                "bboxNormalized": {
+                    "x": bbox[0] / page_width if page_width else 0,
+                    "y": bbox[1] / page_height if page_height else 0,
+                    "width": (bbox[2] - bbox[0]) / page_width if page_width else 0,
+                    "height": (bbox[3] - bbox[1]) / page_height if page_height else 0,
+                },
+                "source": word.get("source", "unknown"),
+            })
+
+    return result
+
 
 # =============================================================================
 # In-Memory Job Tracking
@@ -542,6 +596,7 @@ def list_page_contexts(
             pass2_output=p.pass2_output,
             processing_status=p.processing_status,
             retry_count=p.retry_count,
+            reference_spans=_extract_reference_spans(p.page_text_spans),
         )
         for p in pages
     ]

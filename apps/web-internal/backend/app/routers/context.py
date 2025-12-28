@@ -347,39 +347,24 @@ def _transform_bbox_for_rotation(bbox_tuple, rotation, mediabox_width, mediabox_
         return (x0, y0, x1, y1)
 
 
-def _extract_all_page_spans(pdf_path: str, page_num: int) -> tuple[list[dict], float, float]:
+def _extract_pymupdf_spans(page, rotation: int, mediabox_width: float, mediabox_height: float) -> list[dict]:
     """
-    Extract ALL text spans from a page (no clipping).
-    
+    Extract text spans from a PDF page using PyMuPDF.
+
     Args:
-        pdf_path: Path to PDF file
-        page_num: 0-indexed page number
-    
+        page: PyMuPDF page object
+        rotation: Page rotation in degrees
+        mediabox_width: Width of the mediabox
+        mediabox_height: Height of the mediabox
+
     Returns:
-        Tuple of (spans_list, page_width, page_height)
-        Each span: {"id": "span_0", "text": "...", "bbox": [x0,y0,x1,y1], "font": "...", "size": 12}
+        List of span dicts: {"id", "text", "bbox", "font", "size", "source"}
     """
-    import fitz  # PyMuPDF
-    
-    doc = fitz.open(pdf_path)
-    page = doc[page_num]
-    
-    # Get page dimensions (display size after rotation)
-    page_width = page.rect.width
-    page_height = page.rect.height
-    
-    # Get rotation info for bbox transformation
-    rotation = page.rotation
-    mediabox = page.mediabox
-    mediabox_width = mediabox.width
-    mediabox_height = mediabox.height
-    
-    # Extract ALL text - no clip parameter
     text_dict = page.get_text("dict")
-    
+
     spans = []
     span_idx = 0
-    
+
     for block in text_dict.get("blocks", []):
         if block.get("type") != 0:  # Skip non-text blocks
             continue
@@ -388,34 +373,270 @@ def _extract_all_page_spans(pdf_path: str, page_num: int) -> tuple[list[dict], f
                 text = span.get("text", "").strip()
                 if not text:  # Skip empty spans
                     continue
-                    
+
                 raw_bbox = span["bbox"]
-                
-                # Transform bbox for rotation (same transform used elsewhere)
+
+                # Transform bbox for rotation
                 transformed = _transform_bbox_for_rotation(
                     raw_bbox, rotation, mediabox_width, mediabox_height
                 )
-                
+
                 spans.append({
-                    "id": f"span_{span_idx}",
+                    "id": f"native_{span_idx}",
                     "text": text,
                     "bbox": list(transformed),
                     "font": span.get("font", ""),
                     "size": span.get("size", 0),
+                    "source": "native",
                 })
                 span_idx += 1
-    
+
+    return spans
+
+
+def _extract_ocr_spans(page, page_num: int) -> tuple[list[dict], list[dict]]:
+    """
+    Extract text via Tesseract OCR with bounding boxes.
+
+    Returns BOTH:
+    - Line-level spans (for AI context - coherent sentences)
+    - Word-level spans (for precise reference highlighting)
+
+    Args:
+        page: PyMuPDF page object
+        page_num: Page number (for span ID generation)
+
+    Returns:
+        Tuple of (line_spans, word_spans)
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+        import io
+        import fitz
+        from collections import defaultdict
+    except ImportError:
+        logger.warning("pytesseract or Pillow not installed, skipping OCR")
+        return [], []
+
+    try:
+        # Render at 200 DPI (balance of quality vs RAM)
+        zoom = 200 / 72
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+
+        # Convert to PIL Image
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+
+        # Get OCR data with bounding boxes
+        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+
+        scale = 72 / 200  # Convert OCR coords back to PDF points
+
+        # Collect word-level spans AND group by line
+        word_spans = []
+        lines = defaultdict(list)
+        word_idx = 0
+
+        for i, text in enumerate(data['text']):
+            text = str(text).strip()
+            if not text:
+                continue
+
+            # Skip low-confidence results
+            conf = data['conf'][i]
+            if isinstance(conf, str):
+                try:
+                    conf = int(conf)
+                except ValueError:
+                    conf = -1
+            if conf < 50:
+                continue
+
+            # Get line grouping keys
+            block_num = data['block_num'][i]
+            par_num = data['par_num'][i]
+            line_num = data['line_num'][i]
+            word_num = data['word_num'][i]
+
+            # Convert coordinates to PDF points
+            x = data['left'][i] * scale
+            y = data['top'][i] * scale
+            w = data['width'][i] * scale
+            h = data['height'][i] * scale
+
+            word_data = {
+                "word_num": word_num,
+                "text": text,
+                "bbox": [x, y, x + w, y + h],
+                "conf": conf,
+            }
+
+            # Add to line grouping
+            lines[(block_num, par_num, line_num)].append(word_data)
+
+            # Also store as individual word span
+            word_spans.append({
+                "id": f"ocr_w_{page_num}_{word_idx}",
+                "text": text,
+                "bbox": [x, y, x + w, y + h],
+                "source": "ocr",
+                "confidence": conf,
+            })
+            word_idx += 1
+
+        # Merge words within each line into line-level spans
+        line_spans = []
+        span_idx = 0
+
+        for line_key, words in lines.items():
+            if not words:
+                continue
+
+            # Sort words by word_num to maintain reading order
+            words.sort(key=lambda w: w["word_num"])
+
+            # Merge text with spaces
+            merged_text = " ".join(w["text"] for w in words)
+
+            # Merge bounding boxes: min x0/y0, max x1/y1
+            x0 = min(w["bbox"][0] for w in words)
+            y0 = min(w["bbox"][1] for w in words)
+            x1 = max(w["bbox"][2] for w in words)
+            y1 = max(w["bbox"][3] for w in words)
+
+            # Average confidence
+            avg_conf = sum(w["conf"] for w in words) / len(words)
+
+            # Height from merged bbox
+            height = y1 - y0
+
+            line_spans.append({
+                "id": f"ocr_{page_num}_{span_idx}",
+                "text": merged_text,
+                "bbox": [x0, y0, x1, y1],
+                "font": "OCR",
+                "size": height,
+                "source": "ocr",
+                "confidence": int(avg_conf),
+            })
+            span_idx += 1
+
+        logger.info(f"OCR extracted {len(line_spans)} line spans + {len(word_spans)} word spans from page {page_num}")
+        return line_spans, word_spans
+
+    except Exception as e:
+        logger.error(f"OCR failed for page {page_num}: {e}")
+        return [], []
+
+
+def _merge_text_spans(pymupdf_spans: list[dict], ocr_spans: list[dict]) -> list[dict]:
+    """
+    Merge PyMuPDF and OCR spans, avoiding duplicates.
+
+    Strategy:
+    - PyMuPDF spans are preferred (higher precision)
+    - OCR spans are added if they don't overlap significantly with PyMuPDF spans
+    - Overlap threshold: 50% IoU (Intersection over Union)
+
+    Args:
+        pymupdf_spans: Spans from PyMuPDF extraction
+        ocr_spans: Spans from Tesseract OCR
+
+    Returns:
+        Merged list of spans
+    """
+    if not ocr_spans:
+        return pymupdf_spans
+    if not pymupdf_spans:
+        return ocr_spans
+
+    def bbox_iou(bbox1: list, bbox2: list) -> float:
+        """Calculate Intersection over Union for two bboxes."""
+        x1 = max(bbox1[0], bbox2[0])
+        y1 = max(bbox1[1], bbox2[1])
+        x2 = min(bbox1[2], bbox2[2])
+        y2 = min(bbox1[3], bbox2[3])
+
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        intersection = (x2 - x1) * (y2 - y1)
+        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+        union = area1 + area2 - intersection
+
+        return intersection / union if union > 0 else 0.0
+
+    merged = list(pymupdf_spans)
+
+    # Add OCR spans that don't significantly overlap with PyMuPDF spans
+    ocr_added = 0
+    for ocr_span in ocr_spans:
+        is_duplicate = False
+        for native_span in pymupdf_spans:
+            if bbox_iou(ocr_span["bbox"], native_span["bbox"]) > 0.5:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            merged.append(ocr_span)
+            ocr_added += 1
+
+    logger.info(f"Merged spans: {len(pymupdf_spans)} native + {ocr_added} OCR-only = {len(merged)} total")
+    return merged
+
+
+def _extract_all_page_spans(pdf_path: str, page_num: int) -> tuple[list[dict], list[dict], float, float]:
+    """
+    Extract ALL text spans from a page using hybrid PyMuPDF + OCR approach.
+
+    Combines native PDF text extraction (PyMuPDF) with OCR (Tesseract) to handle:
+    - Native text: Extracted directly from PDF
+    - Vectorized text: CAD/CAM exports where text is paths, captured via OCR
+
+    Args:
+        pdf_path: Path to PDF file
+        page_num: 0-indexed page number
+
+    Returns:
+        Tuple of (line_spans, word_spans, page_width, page_height)
+        - line_spans: Line-level spans for AI context (coherent sentences)
+        - word_spans: Word-level spans for precise reference highlighting
+    """
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(pdf_path)
+    page = doc[page_num]
+
+    # Get page dimensions (display size after rotation)
+    page_width = page.rect.width
+    page_height = page.rect.height
+
+    # Get rotation info for bbox transformation
+    rotation = page.rotation
+    mediabox = page.mediabox
+    mediabox_width = mediabox.width
+    mediabox_height = mediabox.height
+
+    # Step 1: Extract native text with PyMuPDF (already word-level)
+    pymupdf_spans = _extract_pymupdf_spans(page, rotation, mediabox_width, mediabox_height)
+
+    # Step 2: Extract OCR text with Tesseract (returns both line and word level)
+    ocr_line_spans, ocr_word_spans = _extract_ocr_spans(page, page_num)
+
+    # Step 3: Merge line-level spans (native + OCR lines)
+    merged_line_spans = _merge_text_spans(pymupdf_spans, ocr_line_spans)
+
+    # Step 4: Combine word-level spans (native spans are already word-ish, plus OCR words)
+    # For native text, each span is roughly a word/phrase, so include them as-is
+    all_word_spans = list(pymupdf_spans) + ocr_word_spans
+
     doc.close()
-    
-    print(f"=== EXTRACT ALL SPANS DEBUG ===")
-    print(f"Page {page_num}: {len(spans)} spans extracted")
-    print(f"Page dimensions: {page_width} x {page_height}")
-    if spans:
-        print(f"First span: {spans[0]}")
-        print(f"Last span: {spans[-1]}")
-    print(f"=== END EXTRACT ALL SPANS DEBUG ===")
-    
-    return spans, page_width, page_height
+
+    logger.info(f"Page {page_num}: {len(merged_line_spans)} line spans, {len(all_word_spans)} word spans")
+
+    return merged_line_spans, all_word_spans, page_width, page_height
 
 
 def _extract_text_from_region(
@@ -987,13 +1208,33 @@ async def create_context_pointer_from_highlight(
         
         # Save the crop image
         crop_path = _save_crop_image(crop_bytes, page_context.file_id, pointer_id)
-        
-        # Extract ALL spans from page (no clipping) for vision-based matching
-        all_page_spans, page_width, page_height = _extract_all_page_spans(
-            pdf_path=file.path,
-            page_num=page_context.page_number - 1,  # convert to 0-indexed
-        )
-        
+
+        # Get text spans from cache or extract them
+        cached = page_context.page_text_spans or {}
+        if cached.get("spans"):
+            # Use cached page-level text spans (line-level for AI context)
+            all_page_spans = cached["spans"]
+            page_width = cached.get("page_width", 1)
+            page_height = cached.get("page_height", 1)
+            logger.info(f"Using cached text spans for page {page_context.page_number}: {len(all_page_spans)} spans")
+        else:
+            # Extract and cache text spans (hybrid PyMuPDF + OCR)
+            line_spans, word_spans, page_width, page_height = _extract_all_page_spans(
+                pdf_path=file.path,
+                page_num=page_context.page_number - 1,  # convert to 0-indexed
+            )
+            all_page_spans = line_spans  # Use line-level for AI context
+            # Cache both line and word spans
+            page_context.page_text_spans = {
+                "spans": line_spans,
+                "words": word_spans,
+                "page_width": page_width,
+                "page_height": page_height,
+                "extracted_at": datetime.utcnow().isoformat(),
+            }
+            db.commit()
+            logger.info(f"Extracted and cached {len(line_spans)} line + {len(word_spans)} word spans for page {page_context.page_number}")
+
         # Analyze with Gemini - includes vision-based span matching
         bbox_dict = {
             "x": body.bbox.x,
@@ -1108,6 +1349,337 @@ def list_page_context_pointers(
     ).all()
     
     return [ContextPointerResponse.from_orm_model(p) for p in pointers]
+
+
+@router.get("/debug/ocr-status")
+def debug_ocr_status():
+    """Debug endpoint to check OCR availability."""
+    result = {
+        "pytesseract_installed": False,
+        "pillow_installed": False,
+        "tesseract_binary": None,
+        "error": None,
+    }
+
+    try:
+        import pytesseract
+        result["pytesseract_installed"] = True
+        result["tesseract_binary"] = pytesseract.pytesseract.tesseract_cmd
+    except ImportError as e:
+        result["error"] = f"pytesseract import failed: {e}"
+
+    try:
+        from PIL import Image
+        result["pillow_installed"] = True
+    except ImportError as e:
+        result["error"] = f"Pillow import failed: {e}"
+
+    return result
+
+
+@router.post("/pages/{page_context_id}/refresh-text-spans")
+def refresh_page_text_spans(
+    page_context_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Re-extract text spans for a page using hybrid PyMuPDF + OCR.
+
+    This clears the cached page_text_spans and re-runs extraction with
+    the latest algorithm (line-grouped OCR).
+    """
+    # Get the PageContext
+    page_context = db.query(PageContext).filter(PageContext.id == page_context_id).first()
+    if not page_context:
+        raise HTTPException(status_code=404, detail="Page context not found")
+
+    # Get the file
+    file = db.query(ProjectFile).filter(ProjectFile.id == page_context.file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Run hybrid extraction
+    try:
+        line_spans, word_spans, page_width, page_height = _extract_all_page_spans(
+            pdf_path=file.path,
+            page_num=page_context.page_number - 1,  # 0-indexed
+        )
+
+        # Update cached spans (both line and word level)
+        page_context.page_text_spans = {
+            "spans": line_spans,
+            "words": word_spans,
+            "page_width": page_width,
+            "page_height": page_height,
+            "extracted_at": datetime.utcnow().isoformat(),
+        }
+        db.commit()
+
+        # Count by source
+        native_count = sum(1 for s in line_spans if s.get("source") == "native")
+        ocr_count = sum(1 for s in line_spans if s.get("source") == "ocr")
+
+        logger.info(f"Refreshed text spans for page {page_context.page_title}: {len(line_spans)} line + {len(word_spans)} word spans")
+
+        return {
+            "success": True,
+            "page_id": page_context_id,
+            "page_title": page_context.page_title,
+            "total_spans": len(line_spans),
+            "word_spans": len(word_spans),
+            "native_spans": native_count,
+            "ocr_spans": ocr_count,
+            "page_width": page_width,
+            "page_height": page_height,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to refresh text spans for page {page_context_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract text spans: {str(e)}")
+
+
+@router.post("/pages/{page_context_id}/refresh-pointer-text")
+def refresh_pointer_text_content(
+    page_context_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh text_content for all pointers on a page using cached page_text_spans.
+
+    This is needed when pointers were created before OCR was enabled.
+    Uses bounding box overlap to match spans to pointers.
+    """
+    # Get the PageContext
+    page_context = db.query(PageContext).filter(PageContext.id == page_context_id).first()
+    if not page_context:
+        raise HTTPException(status_code=404, detail="Page context not found")
+
+    # Check for cached spans
+    cached = page_context.page_text_spans or {}
+    all_page_spans = cached.get("spans", [])
+    page_width = cached.get("page_width", 1)
+    page_height = cached.get("page_height", 1)
+
+    if not all_page_spans:
+        raise HTTPException(status_code=400, detail="No cached text spans. Run refresh-text-spans first.")
+
+    # Get all pointers for this page
+    pointers = db.query(ContextPointer).filter(
+        ContextPointer.page_context_id == page_context_id
+    ).all()
+
+    if not pointers:
+        return {"success": True, "message": "No pointers on this page", "updated": 0}
+
+    def spans_overlap(span_bbox: list, pointer_x: float, pointer_y: float,
+                      pointer_w: float, pointer_h: float) -> bool:
+        """Check if span bbox overlaps with pointer region (both in normalized coords)."""
+        # Convert span bbox from PDF points to normalized
+        sx0 = span_bbox[0] / page_width
+        sy0 = span_bbox[1] / page_height
+        sx1 = span_bbox[2] / page_width
+        sy1 = span_bbox[3] / page_height
+
+        # Pointer bounds
+        px0 = pointer_x
+        py0 = pointer_y
+        px1 = pointer_x + pointer_w
+        py1 = pointer_y + pointer_h
+
+        # Check overlap
+        return not (sx1 < px0 or sx0 > px1 or sy1 < py0 or sy0 > py1)
+
+    updated_count = 0
+
+    for pointer in pointers:
+        # Find spans that overlap with this pointer
+        matched_spans = [
+            s for s in all_page_spans
+            if spans_overlap(s["bbox"], pointer.bounds_x, pointer.bounds_y,
+                           pointer.bounds_w, pointer.bounds_h)
+        ]
+
+        if matched_spans:
+            # Build new text_content
+            text_content = {
+                "full_text": " ".join([s["text"] for s in matched_spans]),
+                "text_elements": [
+                    {
+                        "id": f"{pointer.id}_t{i}",
+                        "text": s["text"],
+                        "bbox": {
+                            "x0": s["bbox"][0],
+                            "y0": s["bbox"][1],
+                            "x1": s["bbox"][2],
+                            "y1": s["bbox"][3]
+                        },
+                        "font": s.get("font", ""),
+                        "size": s.get("size", 0),
+                        "flags": 0
+                    }
+                    for i, s in enumerate(matched_spans)
+                ],
+                "clip_rect": {
+                    "x0": pointer.bounds_x * page_width,
+                    "y0": pointer.bounds_y * page_height,
+                    "x1": (pointer.bounds_x + pointer.bounds_w) * page_width,
+                    "y1": (pointer.bounds_y + pointer.bounds_h) * page_height
+                },
+                "page_width": page_width,
+                "page_height": page_height
+            }
+
+            pointer.text_content = text_content
+            pointer.updated_at = datetime.utcnow()
+            updated_count += 1
+
+            logger.info(f"Updated pointer {pointer.id[:8]}... with {len(matched_spans)} text elements")
+
+    db.commit()
+
+    return {
+        "success": True,
+        "page_id": page_context_id,
+        "page_title": page_context.page_title,
+        "total_pointers": len(pointers),
+        "updated_pointers": updated_count,
+        "page_spans_available": len(all_page_spans),
+    }
+
+
+@router.post("/projects/{project_id}/refresh-all-text-spans")
+def refresh_all_project_text_spans(
+    project_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh text spans and pointer text_content for ALL pages in a project.
+
+    This runs hybrid OCR extraction on each page, then updates all pointers
+    with matched text elements. Run this before reprocessing Pass 1.
+    """
+    import fitz
+
+    # Get all page contexts for this project
+    pages = db.query(PageContext).join(
+        ProjectFile, PageContext.file_id == ProjectFile.id
+    ).filter(
+        ProjectFile.project_id == project_id
+    ).all()
+
+    if not pages:
+        return {"success": True, "message": "No pages found", "pages_processed": 0}
+
+    results = []
+
+    for page_context in pages:
+        try:
+            # Get the file
+            file = db.query(ProjectFile).filter(ProjectFile.id == page_context.file_id).first()
+            if not file or not file.path:
+                results.append({
+                    "page_id": page_context.id,
+                    "page_title": page_context.page_title,
+                    "status": "error",
+                    "error": "File not found"
+                })
+                continue
+
+            # Step 1: Extract text spans (hybrid OCR)
+            line_spans, word_spans, page_width, page_height = _extract_all_page_spans(
+                pdf_path=file.path,
+                page_num=page_context.page_number - 1,
+            )
+
+            # Cache both line and word spans
+            page_context.page_text_spans = {
+                "spans": line_spans,
+                "words": word_spans,
+                "page_width": page_width,
+                "page_height": page_height,
+                "extracted_at": datetime.utcnow().isoformat(),
+            }
+
+            # Step 2: Update pointers with matched text elements (using line spans for AI context)
+            pointers = db.query(ContextPointer).filter(
+                ContextPointer.page_context_id == page_context.id
+            ).all()
+
+            def spans_overlap(span_bbox: list, pointer_x: float, pointer_y: float,
+                              pointer_w: float, pointer_h: float) -> bool:
+                sx0 = span_bbox[0] / page_width
+                sy0 = span_bbox[1] / page_height
+                sx1 = span_bbox[2] / page_width
+                sy1 = span_bbox[3] / page_height
+                px0, py0 = pointer_x, pointer_y
+                px1, py1 = pointer_x + pointer_w, pointer_y + pointer_h
+                return not (sx1 < px0 or sx0 > px1 or sy1 < py0 or sy0 > py1)
+
+            pointers_updated = 0
+            for pointer in pointers:
+                matched_spans = [
+                    s for s in line_spans
+                    if spans_overlap(s["bbox"], pointer.bounds_x, pointer.bounds_y,
+                                   pointer.bounds_w, pointer.bounds_h)
+                ]
+                if matched_spans:
+                    pointer.text_content = {
+                        "full_text": " ".join([s["text"] for s in matched_spans]),
+                        "text_elements": [
+                            {
+                                "id": f"{pointer.id}_t{i}",
+                                "text": s["text"],
+                                "bbox": {"x0": s["bbox"][0], "y0": s["bbox"][1],
+                                        "x1": s["bbox"][2], "y1": s["bbox"][3]},
+                                "font": s.get("font", ""),
+                                "size": s.get("size", 0),
+                                "flags": 0
+                            }
+                            for i, s in enumerate(matched_spans)
+                        ],
+                        "page_width": page_width,
+                        "page_height": page_height
+                    }
+                    pointer.updated_at = datetime.utcnow()
+                    pointers_updated += 1
+
+            db.commit()
+
+            # Count spans by source (line_spans contain both native and OCR lines)
+            native_count = sum(1 for s in line_spans if s.get("source") == "native")
+            ocr_count = sum(1 for s in line_spans if s.get("source") == "ocr")
+
+            results.append({
+                "page_id": page_context.id,
+                "page_title": page_context.page_title,
+                "status": "success",
+                "line_spans": len(line_spans),
+                "word_spans": len(word_spans),
+                "native": native_count,
+                "ocr": ocr_count,
+                "pointers_updated": pointers_updated,
+            })
+
+            logger.info(f"Refreshed {page_context.page_title}: {len(line_spans)} lines, {len(word_spans)} words, {pointers_updated} pointers")
+
+        except Exception as e:
+            logger.error(f"Failed to refresh page {page_context.page_title}: {e}")
+            results.append({
+                "page_id": page_context.id,
+                "page_title": page_context.page_title,
+                "status": "error",
+                "error": str(e)
+            })
+
+    success_count = sum(1 for r in results if r["status"] == "success")
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "pages_processed": success_count,
+        "pages_failed": len(results) - success_count,
+        "results": results
+    }
 
 
 @router.patch("/context-pointers/{pointer_id}", response_model=ContextPointerResponse)

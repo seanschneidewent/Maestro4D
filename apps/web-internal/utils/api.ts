@@ -839,6 +839,13 @@ export interface ContextTreePageContext {
   pass2Output?: Record<string, unknown>;
   processingStatus: string;
   retryCount: number;
+  // Reference spans for highlighting on page modal
+  referenceSpans?: Array<{
+    id: string;
+    text: string;
+    bboxNormalized: { x: number; y: number; width: number; height: number };
+    source: string;
+  }>;
 }
 
 export async function fetchPageContexts(projectId: string): Promise<ContextTreePageContext[]> {
@@ -1008,5 +1015,6 @@ export interface TextHighlight {
     height: number;
   };
   matchedText: string;
+  isReferenceSpan?: boolean;  // True if from OCR reference detection
 }
 

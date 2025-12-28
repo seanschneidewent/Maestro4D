@@ -737,6 +737,8 @@ class PageContextResponse(PageContextBase):
     pass2_output: Optional[dict] = Field(None, alias="pass2Output")
     processing_status: str = Field("unprocessed", alias="processingStatus")
     retry_count: int = Field(0, alias="retryCount")
+    # Reference spans for highlighting on page modal
+    reference_spans: Optional[List[dict]] = Field(None, alias="referenceSpans")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

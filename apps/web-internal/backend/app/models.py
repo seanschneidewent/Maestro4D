@@ -178,6 +178,7 @@ class PageContext(Base):
     pass1_output = Column(JSON, nullable=True)  # Full Pass 1 structured output
     inbound_references = Column(JSON, nullable=True)  # Computed after Pass 1, context added after Pass 2
     pass2_output = Column(JSON, nullable=True)  # Full Pass 2 structured output
+    page_text_spans = Column(JSON, nullable=True)  # Cached text spans from hybrid PyMuPDF+OCR extraction
     processing_status = Column(String, default="unprocessed")  
     # unprocessed, pass1_processing, pass1_complete, pass2_processing, pass2_complete
     retry_count = Column(Integer, default=0)  # Tracks Pass 1 retry attempts
